@@ -19,6 +19,35 @@
     --ok: #7ec699;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
   }
+
+  /* The platform scrollbar is a light widget with stepper arrows, which on a
+     dark panel reads as a bright seam down the side of the window. Restyled
+     rather than hidden: something has to say the list continues.
+
+     Quiet at rest and legible on approach — the thumb sits at the weight of a
+     divider until the pointer is over the thing that scrolls. Sized through a
+     transparent border with background-clip so the track stays empty and the
+     thumb keeps its inset without a second element. */
+  * {
+    scrollbar-width: thin;                        /* Firefox, and the standard */
+    scrollbar-color: var(--line) transparent;
+  }
+  ::-webkit-scrollbar { width: 12px; height: 12px; }
+  ::-webkit-scrollbar-track,
+  ::-webkit-scrollbar-corner { background: transparent; }
+  ::-webkit-scrollbar-thumb {
+    background: var(--line);
+    border: 3px solid transparent;
+    background-clip: content-box;
+    border-radius: 999px;
+  }
+  /* Hover on the scrolling element, not the thumb: the thumb is a few pixels
+     wide and asking someone to find it before it brightens is a poor trade. */
+  :hover::-webkit-scrollbar-thumb { background: #37415a; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:hover { background: #46536f; background-clip: content-box; }
+  ::-webkit-scrollbar-thumb:active { background: var(--muted); background-clip: content-box; }
+  /* The stepper arrows. Nothing else in this window has them. */
+  ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
   body {
