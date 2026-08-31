@@ -39,10 +39,22 @@ consortium who                      print the shared workspace path
 Each participant has its own cursor, so `read` only returns what is new and never
 echoes a participant's own messages back at it.
 
-Install it where the agents can reach it:
+### Getting set up
+
+The app bundles the CLI. From a downloaded release:
+
+1. Open Consortium. If the CLI is not installed it says so, next to an **Install CLI**
+   button — click it. It copies the bundled binary to the first writable directory
+   already on your PATH, and tells you plainly if it could only reach one that is not.
+2. Press **Briefing** and paste each agent its instructions.
+
+That is the whole setup. There is nothing to log into.
+
+From a checkout instead:
 
 ```bash
-cargo build --release --bin consortium
+npm install
+npm run bundle:cli
 cp src-tauri/target/release/consortium /opt/homebrew/bin/
 ```
 

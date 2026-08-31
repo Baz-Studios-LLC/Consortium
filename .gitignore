@@ -3,3 +3,5 @@ src-tauri/target/
 .DS_Store
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
+src-tauri/resources/consortium
+src-tauri/resources/consortium.exe

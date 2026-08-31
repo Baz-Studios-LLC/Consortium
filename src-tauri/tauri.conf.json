@@ -4,7 +4,8 @@
   "version": "0.1.0",
   "identifier": "com.bazstudios.consortium",
   "build": {
-    "frontendDist": "../src"
+    "frontendDist": "../src",
+    "beforeBuildCommand": "npm run bundle:cli"
   },
   "app": {
     "withGlobalTauri": true,
@@ -35,7 +36,10 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "createUpdaterArtifacts": true
+    "createUpdaterArtifacts": true,
+    "resources": [
+      "resources/*"
+    ]
   },
   "plugins": {
     "updater": {

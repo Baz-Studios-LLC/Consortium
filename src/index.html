@@ -243,6 +243,7 @@
   </div>
   <div class="opts">
     <span class="opt-label" id="cliState">Checking for the consortium CLI…</span>
+    <button class="ghost" id="installCli" style="display:none">Install CLI</button>
   </div>
   <div class="hint" id="status">Ready.</div>
 </footer>
@@ -560,11 +561,40 @@ async function loadWorkspace() {
 
 async function checkCli() {
   const path = await invoke('cli_installed');
+  const btn = $('installCli');
   $('cliState').textContent = path
     ? 'consortium CLI ready at ' + path
-    : 'consortium CLI not on PATH — the agents cannot talk until it is installed';
+    : 'consortium CLI not installed — the agents cannot talk until it is';
   $('cliState').style.color = path ? '' : 'var(--err)';
+  // The whole system is inert without the CLI, so make fixing it one click.
+  btn.style.display = path ? 'none' : '';
 }
+
+$('installCli').onclick = async () => {
+  const btn = $('installCli');
+  btn.disabled = true;
+  btn.textContent = 'Installing…';
+  try {
+    const res = await invoke('install_cli');
+    if (res.on_path) {
+      $('cliState').textContent = 'consortium CLI installed at ' + res.path;
+      $('cliState').style.color = '';
+      btn.style.display = 'none';
+    } else {
+      // Installed, but somewhere the agents' shells will not look.
+      $('cliState').textContent =
+        'Installed to ' + res.path + ' — but that folder is not on your PATH, so the ' +
+        'agents still cannot run it. Add it to your shell profile.';
+      $('cliState').style.color = 'var(--err)';
+      btn.textContent = 'Installed';
+    }
+  } catch (e) {
+    $('cliState').textContent = 'Install failed: ' + e;
+    $('cliState').style.color = 'var(--err)';
+    btn.disabled = false;
+    btn.textContent = 'Retry install';
+  }
+};
 
 // ---------- self-update ----------
 let pendingUpdate = null;

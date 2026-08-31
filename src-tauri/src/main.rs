@@ -13,12 +13,12 @@
 
 mod bus;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 // ---------------------------------------------------------------------------
 // Binary discovery
@@ -200,6 +200,93 @@ fn cli_installed() -> Option<String> {
     resolve_binary("consortium").map(|p| p.to_string_lossy().into_owned())
 }
 
+/// Where to put the CLI. Prefer a directory the user's login shell already has on
+/// PATH — installing somewhere invisible looks like success and then fails at the
+/// first `consortium post`, which is the worst possible outcome.
+fn cli_install_dir() -> (PathBuf, bool) {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+
+    let shell_path = {
+        #[cfg(not(windows))]
+        {
+            let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".into());
+            Command::new(shell)
+                .args(["-lc", "echo $PATH"])
+                .output()
+                .ok()
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+                .unwrap_or_default()
+        }
+        #[cfg(windows)]
+        { std::env::var("PATH").unwrap_or_default() }
+    };
+
+    let candidates = [
+        PathBuf::from("/opt/homebrew/bin"),
+        PathBuf::from("/usr/local/bin"),
+        PathBuf::from(&home).join(".local/bin"),
+        PathBuf::from(&home).join(".cargo/bin"),
+    ];
+
+    // First choice: already on PATH and writable without a password.
+    for dir in &candidates {
+        let on_path = shell_path.split(':').any(|p| Path::new(p) == dir.as_path());
+        let writable = dir.is_dir()
+            && std::fs::OpenOptions::new()
+                .write(true).create(true).truncate(true)
+                .open(dir.join(".consortium-write-test"))
+                .map(|_| { let _ = std::fs::remove_file(dir.join(".consortium-write-test")); true })
+                .unwrap_or(false);
+        if on_path && writable {
+            return (dir.clone(), true);
+        }
+    }
+
+    // Fall back to ~/.local/bin and tell the caller it is not on PATH yet.
+    let fallback = PathBuf::from(&home).join(".local/bin");
+    let on_path = shell_path.split(':').any(|p| Path::new(p) == fallback.as_path());
+    (fallback, on_path)
+}
+
+#[derive(Serialize)]
+struct InstallResult {
+    path: String,
+    /// False when the install directory is not on the user's PATH, in which case
+    /// the agents still will not be able to run it.
+    on_path: bool,
+}
+
+/// Copy the bundled CLI somewhere the agents can actually invoke it. Without this
+/// a downloaded app is inert: the briefings tell each agent to run `consortium`,
+/// and there is no `consortium`.
+#[tauri::command]
+fn install_cli(app: AppHandle) -> Result<InstallResult, String> {
+    let exe = if cfg!(windows) { "consortium.exe" } else { "consortium" };
+
+    let src = app
+        .path()
+        .resolve(format!("resources/{}", exe), tauri::path::BaseDirectory::Resource)
+        .map_err(|e| format!("bundled CLI not found: {e}"))?;
+    if !src.is_file() {
+        return Err(format!("bundled CLI missing at {}", src.display()));
+    }
+
+    let (dir, on_path) = cli_install_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
+    let dst = dir.join(exe);
+    std::fs::copy(&src, &dst).map_err(|e| format!("could not write {}: {e}", dst.display()))?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o755));
+    }
+
+    Ok(InstallResult { path: dst.to_string_lossy().into_owned(), on_path })
+}
+
 // ---------------------------------------------------------------------------
 // Self-update
 //
@@ -251,6 +338,7 @@ fn main() {
             bus_presence,
             bus_post,
             cli_installed,
+            install_cli,
             update_check,
             update_install
         ])
