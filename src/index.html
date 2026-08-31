@@ -237,7 +237,7 @@
 
 <footer>
   <div class="row">
-    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (⌘↵ to send)"></textarea>
+    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (↵ to send, ⇧↵ for a new line)"></textarea>
     <button id="runBtn">Send</button>
     <button id="stopBtn" class="stop" style="display:none">Stop</button>
   </div>
@@ -577,7 +577,14 @@ $('installCli').onclick = async () => {
   try {
     const res = await invoke('install_cli');
     if (res.on_path) {
-      $('cliState').textContent = 'consortium CLI installed at ' + res.path;
+      // A process inherits PATH when it starts and never sees later changes, so
+      // an agent app that was already open cannot find a CLI installed after it
+      // launched. Saying so here saves the same confusing round of "it is on my
+      // PATH though" that this message used to cause.
+      $('cliState').textContent =
+        'consortium CLI installed at ' + res.path +
+        ' — if an agent still cannot find it, quit and reopen that agent’s app: ' +
+        'a running program keeps the PATH it started with.';
       $('cliState').style.color = '';
       btn.style.display = 'none';
     } else {
@@ -628,7 +635,17 @@ $('refreshBtn').onclick = () => {
   loadWorkspace(); pollBus(); pollPresence(); checkCli();
 };
 $('prompt').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+  if (e.key !== 'Enter') return;
+  // Enter mid-composition is choosing an IME candidate, not sending. Without
+  // this guard anyone typing Japanese or Chinese posts half a word every time
+  // they pick a character.
+  if (e.isComposing) return;
+  // Shift-Enter is the newline; Enter sends, as in every other chat window.
+  // Cmd/Ctrl-Enter still sends too — that is what this used to be, and keeping
+  // the muscle memory costs nothing.
+  if (e.shiftKey) return;
+  e.preventDefault();
+  send();
 });
 
 renderParticipants();

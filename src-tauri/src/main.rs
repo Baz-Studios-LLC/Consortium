@@ -232,7 +232,7 @@ fn cli_install_dir() -> (PathBuf, bool) {
 
     // First choice: already on PATH and writable without a password.
     for dir in &candidates {
-        let on_path = shell_path.split(':').any(|p| Path::new(p) == dir.as_path());
+        let on_path = path_lists(&shell_path, dir);
         let writable = dir.is_dir()
             && std::fs::OpenOptions::new()
                 .write(true).create(true).truncate(true)
@@ -246,8 +246,38 @@ fn cli_install_dir() -> (PathBuf, bool) {
 
     // Fall back to ~/.local/bin and tell the caller it is not on PATH yet.
     let fallback = PathBuf::from(&home).join(".local/bin");
-    let on_path = shell_path.split(':').any(|p| Path::new(p) == fallback.as_path());
+    let on_path = path_lists(&shell_path, &fallback);
     (fallback, on_path)
+}
+
+/// Whether a PATH string actually lists a directory.
+///
+/// Split with `std::env::split_paths` rather than on a hard-coded separator.
+/// This used to split on ':', which is correct on Unix and nonsense on Windows:
+/// the separator there is ';' and the paths themselves contain colons, so
+/// "C:\Users\me\.local\bin;C:\Windows" split on ':' yields "C",
+/// "\Users\me\.local\bin;C" and "\Windows" — fragments that can
+/// never equal a real directory. The result was that on Windows this always
+/// answered "no", so the app told people to add a folder to their PATH that was
+/// already on it.
+///
+/// Comparison is case-insensitive on Windows, where two spellings of the same
+/// directory are the same directory.
+fn path_lists(path_var: &str, dir: &Path) -> bool {
+    /// A trailing separator and, on Windows, letter case are both differences
+    /// that do not make it a different directory.
+    fn normalise(p: &Path) -> String {
+        let text = p.to_string_lossy();
+        let trimmed = text.trim_end_matches(std::path::MAIN_SEPARATOR);
+        if cfg!(windows) {
+            trimmed.to_lowercase()
+        } else {
+            trimmed.to_string()
+        }
+    }
+
+    let target = normalise(dir);
+    std::env::split_paths(path_var).any(|entry| normalise(&entry) == target)
 }
 
 #[derive(Serialize)]

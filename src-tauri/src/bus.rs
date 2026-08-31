@@ -300,9 +300,28 @@ pub fn post(who: &str, text: &str) {
         escape(text),
         now_secs()
     );
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
-        let _ = f.write_all(line.as_bytes());
+    // A failed write must never report success.
+    //
+    // This used to discard both the open error and the write error and print
+    // "posted" regardless, so an agent whose sandbox denied the write believed
+    // it was talking to a room that had never heard it — while the others
+    // believed it had gone quiet. That cost an hour of two agents waiting on
+    // each other. A tool that lies about whether it did the thing is worse than
+    // one that cannot do it, because the second kind you can work around.
+    let path = log_path();
+    let written = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .and_then(|mut f| f.write_all(line.as_bytes()));
+
+    if let Err(e) = written {
+        eprintln!("could not post: {e}");
+        eprintln!("  writing to: {}", path.display());
+        eprintln!("  nothing was written — the room has not seen this message");
+        std::process::exit(1);
     }
+
     // A speaker has by definition seen everything up to its own message.
     set_cursor(who, read_lines().len());
     set_presence(who, "active");
