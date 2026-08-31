@@ -63,6 +63,14 @@
     background: var(--panel); -webkit-app-region: drag;
   }
   header .brand { font-weight: 650; letter-spacing: .2px; }
+  /* Three pieces of text at three sizes. Centring each box separately leaves
+     their baselines at three different heights, which is what made the row
+     look crooked; grouping them and aligning on the baseline puts the type
+     on one line while the group as a whole stays centred against the
+     buttons. The .hint margin is meant for stacked hints under a control,
+     and has no business in a row. */
+  .brandline { display: flex; align-items: baseline; gap: 10px; min-width: 0; }
+  .brandline .hint, .brandline .ver { margin: 0; }
   header .ws {
     margin-left: auto; display: flex; align-items: center; gap: 8px;
     -webkit-app-region: no-drag;
@@ -81,29 +89,22 @@
      transcript. Over the top rather than beside: pushing the transcript
      sideways would reflow every message to open a menu. */
   .drawer-scrim {
-    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    position: absolute; inset: 0; background: rgba(0,0,0,.45);
     opacity: 0; pointer-events: none; transition: opacity 160ms ease; z-index: 40;
   }
   .drawer-scrim.on { opacity: 1; pointer-events: auto; }
+  /* Everything structural comes from .panel; this is only where it sits. */
   .drawer {
-    position: fixed; top: 0; right: 0; bottom: 0;
+    position: absolute; top: 0; right: 0; bottom: 0;
     width: 320px; max-width: 86vw; z-index: 50;
-    background: var(--panel); border-left: 1px solid var(--line);
+    border-left: 1px solid var(--line);
     box-shadow: -20px 0 44px rgba(0,0,0,.5);
-    display: grid; grid-template-rows: auto 1fr; min-height: 0;
     /* 101% so the shadow clears the edge as well as the panel. */
     transform: translateX(101%);
     transition: transform 190ms cubic-bezier(.2,.8,.2,1);
   }
   .drawer.on { transform: none; }
-  .drawer-head {
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 12px 14px; border-bottom: 1px solid var(--line);
-    font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--muted);
-  }
-  .drawer-body { padding: 12px 14px 18px; overflow-y: auto; min-height: 0; }
-  .drawer-body .sec-title { margin-top: 20px; }
+  .drawer .sec-title { margin-top: 14px; }
   @media (prefers-reduced-motion: reduce) {
     .drawer, .drawer-scrim { transition: none; }
   }
@@ -112,12 +113,17 @@
   main {
     display: grid; grid-template-columns: 260px 1fr; min-height: 0;
     transition: grid-template-columns 160ms ease;
+    /* The drawer is positioned against this rather than the window, so both
+       panels span exactly the same band: below the header, above the footer.
+       Anchored to the viewport it started at the very top and the two sides
+       disagreed about where a panel begins. */
+    position: relative; overflow: hidden;
   }
   /* Collapsing the track rather than hiding the element: display:none would
      make the transcript jump, where a track can slide. overflow:hidden on the
      aside is what stops its contents spilling while it narrows. */
   body.rail-hidden main { grid-template-columns: 0 1fr; }
-  body.rail-hidden aside { border-right-color: transparent; }
+  body.rail-hidden .rail { border-right-color: transparent; }
   .ghost.icon {
     padding: 0; width: 30px; font-size: 14px; line-height: 1;
     -webkit-app-region: no-drag;
@@ -125,17 +131,38 @@
   @media (prefers-reduced-motion: reduce) {
     main { transition: none; }
   }
-  aside {
-    border-right: 1px solid var(--line); background: var(--panel);
+  /* ---- side panels ----
+     The rail on the left and the rooms drawer on the right are the same
+     object in two positions: a titled head that does not scroll, over a body
+     that does. Written once, because two near-identical blocks is precisely
+     how the two sides come to disagree about padding, or a border, or how
+     tall a header is.
+
+     Only what genuinely differs is stated separately: which edge it sits on,
+     and whether it floats above the content or holds a column of its own. */
+  .panel {
+    background: var(--panel);
     display: grid; grid-template-rows: auto 1fr;
     min-height: 0; min-width: 0; overflow: hidden;
   }
+  .panel-head {
+    display: flex; align-items: center; justify-content: space-between; gap: 8px;
+    height: 44px; flex: none; padding: 0 8px 0 18px;
+    border-bottom: 1px solid var(--line);
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted);
+  }
+  /* 8px here plus 10px on each row is the 18px inset the rail already used,
+     so rows on both sides line up with their own headings. */
+  .panel-body { padding: 8px 8px 18px; overflow-y: auto; min-height: 0; }
+
+  .rail { border-right: 1px solid var(--line); }
   .sec-title {
     font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
-    color: var(--muted); padding: 15px 18px 8px;
+    color: var(--muted); padding: 15px 10px 8px;
   }
   .agent {
-    display: flex; align-items: center; gap: 9px; margin: 0 8px 6px;
+    display: flex; align-items: center; gap: 9px; margin: 0 0 6px;
     padding: 9px 10px; border-radius: 8px;
     border: 1px solid transparent;
   }
@@ -192,17 +219,19 @@
     border-radius: 8px; padding: 10px; resize: vertical;
   }
 
-  .files { overflow-y: auto; padding-bottom: 12px; min-height: 0; }
+  /* The panel body is the scroller; a second one nested inside it would
+     give the rail two scrollbars and two places to be lost in. */
+  .files { padding-bottom: 12px; }
   .file {
     display: flex; gap: 8px; align-items: center; overflow: hidden;
-    padding: 5px 18px; font-family: var(--mono); font-size: 11px;
+    padding: 5px 10px; font-family: var(--mono); font-size: 11px;
   }
   .file .nm {
     flex: 1 1 auto; min-width: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
   .file .sz { flex: none; color: var(--muted); font-size: 10px; }
-  .empty { color: var(--muted); padding: 6px 18px; font-size: 11.5px; font-style: italic; }
+  .empty { color: var(--muted); padding: 6px 10px; font-size: 11.5px; font-style: italic; }
 
   /* ---- transcript ---- */
   #log { overflow-y: auto; padding: 18px 22px; min-height: 0; min-width: 0; }
@@ -328,9 +357,11 @@
 
 <header>
   <button class="ghost icon" id="sidebarBtn" title="Hide the sidebar" aria-label="Hide the sidebar" aria-expanded="true">☰</button>
-  <span class="brand">Consortium</span>
-  <span class="ver" id="appVer" title="Running version"></span>
-  <span class="hint" id="sub">development studio</span>
+  <div class="brandline">
+    <span class="brand">Consortium</span>
+    <span class="ver" id="appVer" title="Running version"></span>
+    <span class="hint" id="sub">development studio</span>
+  </div>
   <div class="ws">
     <button class="pill" id="updatePill"></button>
     <span class="ws-path" id="wsPath">…</span>
@@ -343,41 +374,43 @@
 </header>
 
 <main>
-  <aside>
-    <div>
-      <div class="sec-title">Agents</div>
+  <aside class="panel rail">
+    <div class="panel-head">
+      <span>Agents</span>
+      <button class="ghost icon" id="railClose" title="Hide the sidebar" aria-label="Hide the sidebar">✕</button>
+    </div>
+    <div class="panel-body">
       <div id="agents"></div>
       <div class="sec-title">Shared workspace</div>
+      <div class="files" id="files"></div>
     </div>
-    <div class="files" id="files"></div>
   </aside>
   <div id="log"></div>
-</main>
-
-<div class="drawer-scrim" id="roomsScrim"></div>
-<div class="drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
-  <div class="drawer-head">
-    <span>Rooms</span>
-    <button class="ghost icon" id="roomsClose" title="Close" aria-label="Close">✕</button>
-  </div>
-  <div class="drawer-body">
-    <div id="conversations"></div>
-    <button class="ghost wide" id="newConvBtn">New room</button>
-    <div class="newconv" id="newConv" hidden>
-      <input id="convName" placeholder="Name, e.g. BazMail">
-      <input id="convDir" placeholder="Project folder — where agents will work">
-      <div class="newconv-row">
-        <button class="ghost" id="convCreate">Create</button>
-        <button class="ghost" id="convCancel">Cancel</button>
-      </div>
+  <div class="drawer-scrim" id="roomsScrim"></div>
+  <div class="panel drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
+    <div class="panel-head">
+      <span>Rooms</span>
+      <button class="ghost icon" id="roomsClose" title="Close" aria-label="Close">✕</button>
     </div>
+    <div class="panel-body">
+      <div id="conversations"></div>
+      <button class="ghost wide" id="newConvBtn">New room</button>
+      <div class="newconv" id="newConv" hidden>
+        <input id="convName" placeholder="Name, e.g. BazMail">
+        <input id="convDir" placeholder="Project folder — where agents will work">
+        <div class="newconv-row">
+          <button class="ghost" id="convCreate">Create</button>
+          <button class="ghost" id="convCancel">Cancel</button>
+        </div>
+      </div>
 
-    <div class="sec-title">Claude session</div>
-    <select id="sessionPick"></select>
-    <button class="ghost wide" id="attachBtn">Continue this session</button>
-    <div class="hint" id="sessionHint"></div>
+      <div class="sec-title">Claude session</div>
+      <select id="sessionPick"></select>
+      <button class="ghost wide" id="attachBtn">Continue this session</button>
+      <div class="hint" id="sessionHint"></div>
+    </div>
   </div>
-</div>
+</main>
 
 <footer>
   <div class="row">
@@ -492,11 +525,15 @@ function applyRail(hidden) {
   btn.title = hidden ? 'Show the sidebar' : 'Hide the sidebar';
   btn.setAttribute('aria-label', btn.title);
 }
-$('sidebarBtn').onclick = () => {
-  const hidden = !document.body.classList.contains('rail-hidden');
+function setRail(hidden) {
   localStorage.setItem(RAIL_KEY, String(hidden));
   applyRail(hidden);
-};
+}
+$('sidebarBtn').onclick = () =>
+  setRail(!document.body.classList.contains('rail-hidden'));
+// The same gesture the drawer offers. Both panels close from their own head
+// as well as from the control that opened them.
+$('railClose').onclick = () => setRail(true);
 // Applied before first paint of the list so a collapsed sidebar does not
 // flash open on every launch.
 applyRail(localStorage.getItem(RAIL_KEY) === 'true');
