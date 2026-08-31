@@ -14,11 +14,10 @@
 mod agent;
 mod bus;
 mod claude_adapter;
-mod conversation;
 mod codex_adapter;
 mod manager;
+mod room;
 mod router;
-mod sessions;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -129,8 +128,17 @@ fn set_workspace(
     studio: State<Studio>,
 ) -> Result<String, String> {
     let p = PathBuf::from(&path);
-    std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
+    // Remembered on disk, not just in this window: the CLI is a separate
+    // process and has to agree about which room it is in, and a restart used
+    // to forget the choice entirely.
+    bus::set_workspace(&p)?;
     *studio.workspace.lock().unwrap() = p.clone();
+
+    // The new folder has its own chat of its own length, so anything the
+    // manager knew about how far it had read is now about a different file.
+    if let Some(manager) = studio.agents.lock().unwrap().clone() {
+        manager.reset();
+    }
 
     // Re-point the watcher, or the room would keep listening to the directory
     // it was moved away from and go quiet without appearing to.
@@ -317,94 +325,17 @@ fn agent_states(studio: tauri::State<Studio>) -> Vec<AgentStatus> {
 /// — working, to look at, and inert.
 #[tauri::command]
 fn bus_clear(studio: tauri::State<Studio>) -> Result<String, String> {
-    let room = conversation::active();
-    let archived = bus::archive_for(&room)?;
+    let archived = bus::archive()?;
     if let Some(manager) = studio.agents.lock().unwrap().clone() {
-        manager.reset(&room);
+        manager.reset();
     }
     Ok(archived.display().to_string())
 }
 
-/// The rooms, and which one the window is showing.
+/// Folders used before, so switching rooms is a click rather than a retype.
 #[tauri::command]
-fn conversations() -> Vec<conversation::Conversation> {
-    conversation::list()
-}
-
-#[tauri::command]
-fn conversation_active() -> String {
-    conversation::active()
-}
-
-#[tauri::command]
-fn conversation_select(slug: String) -> Result<(), String> {
-    conversation::set_active(&slug)
-}
-
-/// Adds a room, optionally tied to a project folder.
-///
-/// The folder is where agents woken here will work, and where their sessions
-/// live. Left empty it is the Consortium workspace, which is right for a room
-/// that is not about a particular repository.
-#[tauri::command]
-fn conversation_create(name: String, dir: Option<String>) -> Result<conversation::Conversation, String> {
-    let dir = dir
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty())
-        .map(std::path::PathBuf::from);
-
-    // Refused here rather than accepted and quietly ignored later: a room
-    // pointed at a folder that does not exist would fall back to the shared
-    // workspace, and every agent woken in it would be in the wrong place with
-    // nothing to say why.
-    if let Some(d) = &dir {
-        if !d.is_dir() {
-            return Err(format!("{} is not a folder on this machine", d.display()));
-        }
-    }
-    conversation::create(&name, dir)
-}
-
-#[tauri::command]
-fn conversation_detach(slug: String, agent: String) -> Result<(), String> {
-    conversation::detach_session(&slug, &agent)
-}
-
-/// Sets the room's shared folder. Empty puts it back to the workspace.
-#[tauri::command]
-fn conversation_set_shared(slug: String, dir: Option<String>) -> Result<(), String> {
-    let dir = dir
-        .map(|d| d.trim().to_string())
-        .filter(|d| !d.is_empty())
-        .map(std::path::PathBuf::from);
-
-    if let Some(d) = &dir {
-        if !d.is_dir() {
-            return Err(format!("{} is not a folder on this machine", d.display()));
-        }
-    }
-    conversation::set_shared(&slug, dir)
-}
-
-/// The threads this agent already has, for choosing one to continue.
-#[tauri::command]
-fn threads(agent: String) -> Vec<sessions::Thread> {
-    sessions::list(&agent)
-}
-
-/// Points a room's agent at a thread it already has.
-///
-/// The thread's folder is stored with it, because that is where the agent
-/// will work: a thread only resumes in the directory it was held in. No
-/// check is needed here — choosing the thread is what chooses the folder.
-#[tauri::command]
-fn conversation_attach(
-    slug: String,
-    agent: String,
-    session: String,
-    session_dir: String,
-) -> Result<(), String> {
-    conversation::attach_session(&slug, &agent, &session, &session_dir)
+fn workspace_recent() -> Vec<String> {
+    bus::recent_workspaces()
 }
 
 #[tauri::command]
@@ -777,14 +708,7 @@ fn main() {
             agent_states,
             bus_post,
             bus_clear,
-            conversations,
-            conversation_active,
-            conversation_select,
-            conversation_create,
-            conversation_attach,
-            conversation_set_shared,
-            conversation_detach,
-            threads,
+            workspace_recent,
             app_version,
             cli_installed,
             install_cli,

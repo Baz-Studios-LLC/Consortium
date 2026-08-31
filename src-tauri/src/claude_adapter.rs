@@ -58,16 +58,10 @@ impl ClaudeAdapter {
     fn prompt(&self, request: &WakeRequest) -> String {
         let mut out = String::new();
         out.push_str(&format!(
-            "You have been addressed in the {} room of Consortium, a shared space, by {}.\n\n",
-            request.conversation, request.sender
+            "You have been addressed in Consortium, a shared room, by {}.\n\n",
+            request.sender
         ));
-        out.push_str(&format!("Working folder: {}\n", request.workspace));
-        // Said explicitly, because an agent continuing a thread in its own
-        // repository has no other way to know where the room keeps things.
-        if request.shared != request.workspace {
-            out.push_str(&format!("Shared folder for this room: {}\n", request.shared));
-        }
-        out.push('\n');
+        out.push_str(&format!("Shared folder: {}\n\n", request.workspace));
 
         if !request.context.is_empty() {
             out.push_str("Recent conversation, oldest first:\n\n");
@@ -113,16 +107,10 @@ impl ClaudeAdapter {
             .arg("--add-dir")
             .arg(&request.workspace)
             .current_dir(&request.workspace)
-            // So that `consortium post` from inside the turn lands back in the
-            // room the turn came from, rather than wherever the window happens
-            // to be pointing.
-            .env("CONSORTIUM_CONVERSATION", &request.conversation);
+            // So a turn that runs while the window is pointed somewhere else
+            // still posts back into the room it was woken for.
+            .env("CONSORTIUM_HOME", &request.workspace);
 
-        // The room's shared folder as well, when it is somewhere else: an
-        // agent that cannot write there cannot hand anything to anyone.
-        if request.shared != request.workspace {
-            cmd.arg("--add-dir").arg(&request.shared);
-        }
 
         let output = cmd
             .output()
@@ -179,8 +167,8 @@ impl AgentAdapter for ClaudeAdapter {
         let attempted = match self.run(request, true) {
             Ok(raw) if raw.contains(NO_SUCH_SESSION) => {
                 bus::log(&format!(
-                    "claude: first turn in {}, creating session {}",
-                    request.conversation, request.session
+                    "claude: first turn here, creating thread {}",
+                    request.session
                 ));
                 self.run(request, false)
             }
@@ -259,7 +247,6 @@ mod tests {
     fn request(body: &str) -> WakeRequest {
         WakeRequest {
             agent: "claude".into(),
-            conversation: "test-room".into(),
             // Fixed, so the first run creates it and every later run resumes
             // it — which is the behaviour under test.
             session: "4d7c8e10-2b3a-4f56-9a81-0c5d6e7f8a90".into(),
@@ -272,7 +259,6 @@ mod tests {
             }],
             hops: 0,
             workspace: std::env::temp_dir().to_string_lossy().into_owned(),
-            shared: std::env::temp_dir().to_string_lossy().into_owned(),
         }
     }
 
@@ -285,7 +271,6 @@ mod tests {
         assert!(p.contains("please look at the parser"), "the message itself");
         assert!(p.contains("Brett"), "who is asking");
         assert!(p.contains("earlier line"), "what came before");
-        assert!(p.contains("test-room"), "which room");
         assert!(
             p.contains("(nothing)"),
             "a way to decline that is not an empty reply"

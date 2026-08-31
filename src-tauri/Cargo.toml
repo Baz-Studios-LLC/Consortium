@@ -24,6 +24,7 @@ serde_json = "1" # agent CLIs speak stream-json; every line off stdout is parsed
 tauri-plugin-updater = "2" # the studio keeps itself up to date
 notify = "8.2.0"
 uuid = { version = "1", features = ["v5"] } # derived session ids: same room, same agent, same id, forever
+rusqlite = { version = "0.32", features = ["bundled"] } # Codex keeps its thread list in SQLite; bundled so no system sqlite is needed
 
 # No HTTP client on purpose — Consortium never talks to a model provider itself.
 # The agent CLIs own their own auth, transport, and billing; we only drive them.

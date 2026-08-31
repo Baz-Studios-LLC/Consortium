@@ -403,7 +403,7 @@
     <button class="ghost" id="briefBtn">Briefing</button>
     <button class="ghost" id="clearBtn">Clear</button>
     <button class="ghost" id="refreshBtn">Refresh</button>
-    <button class="ghost icon" id="roomsBtn" title="Rooms" aria-label="Rooms" aria-expanded="false">☰</button>
+    <button class="ghost icon" id="roomsBtn" title="Room" aria-label="Room" aria-expanded="false">☰</button>
   </div>
 </header>
 
@@ -422,32 +422,19 @@
   <div id="log"></div>
     <div class="panel drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
     <div class="panel-head">
-      <span>Rooms</span>
+      <span>Room</span>
       <button class="ghost icon" id="roomsClose" title="Close" aria-label="Close">✕</button>
     </div>
-    <div class="panel-body">
-      <div id="conversations"></div>
-      <button class="ghost wide" id="newConvBtn">+ New room</button>
-      <div class="newconv" id="newConv" hidden>
-        <input id="convName" placeholder="Name, e.g. BazMail">
-        <input id="convDir" placeholder="Project folder — where agents will work">
-        <div class="newconv-row">
-          <button class="ghost" id="convCreate">Create</button>
-          <button class="ghost" id="convCancel">Cancel</button>
-        </div>
-      </div>
+  <div class="panel-body">
+    <label class="field-label" for="folderPath">Shared folder</label>
+    <div class="field-row">
+      <input id="folderPath" placeholder="C:\Code\BazMail" spellcheck="false">
+      <button class="ghost" id="folderOpen">Open</button>
+    </div>
+    <div class="hint" id="folderHint"></div>
 
-      <div class="room-settings">
-        <div class="sec-title" id="settingsTitle">Room</div>
-
-        <label class="field-label" for="sharedDir">Shared folder</label>
-        <div class="field-row">
-          <input id="sharedDir" placeholder="Consortium workspace">
-          <button class="ghost" id="sharedSave">Set</button>
-        </div>
-        <div class="hint" id="sharedHint"></div>
-
-        <div id="agentSections"></div>
+    <div class="sec-title">Recent</div>
+    <div id="recentFolders"></div>
       </div>
     </div>
   </div>
@@ -497,9 +484,7 @@ let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
 let presence = {};          // name -> {state, age_secs}
 let managed = {};           // lowercased name -> {state, detail}, agents we run
-let rooms = [];             // every conversation
-let activeRoom = 'general';
-let threadsFor = {};        // agent id -> its threads, newest first
+let folders = [];           // folders used before, most recent first
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -579,9 +564,7 @@ $('railClose').onclick = () => setRail(true);
 // flash open on every launch.
 applyRail(localStorage.getItem(RAIL_KEY) === 'true');
 
-// Rooms first: the transcript and the session picker both depend on knowing
-// which room is showing.
-loadRooms().then(loadThreads);
+loadFolders();
 
 // Shown because updates now apply on their own. Without it, "which version are
 // you on" is a question the window cannot answer.
@@ -642,20 +625,78 @@ async function send() {
   pollBus();
 }
 
-// ---------- rooms ----------
-// Opening is cheap and the contents can be stale — a session created since
-// the last look should be in the list — so both are refreshed on the way in.
+// ---------- the room ----------
+// A folder is a room. Its chat lives in it, agents woken here work in it, and
+// their memory of it is derived from its path — so pointing Consortium at a
+// different folder is the whole of switching rooms. Nothing to name, nothing
+// to create, nothing to choose a thread for.
+async function loadFolders() {
+  try {
+    folders = await invoke('workspace_recent');
+    $('folderHint').textContent = 'Agents woken here work in this folder.';
+  } catch (_) { folders = []; }
+
+  // Left alone while being typed in, or a refresh would rewrite the field
+  // under the cursor.
+  if (document.activeElement !== $('folderPath')) {
+    try { $('folderPath').value = await invoke('get_workspace'); } catch (_) {}
+  }
+  renderFolders();
+}
+
+const folderOf = (p) => String(p || '').split(/[\\/]/).filter(Boolean).slice(-1)[0] || p;
+const sameFolder = (a, b) =>
+  String(a || '').replace(/[\\/]+$/, '').toLowerCase() ===
+  String(b || '').replace(/[\\/]+$/, '').toLowerCase();
+
+function renderFolders() {
+  const box = $('recentFolders');
+  const here = $('folderPath').value;
+  box.innerHTML = '';
+  for (const f of folders) {
+    const el = document.createElement('div');
+    el.className = 'conv' + (sameFolder(f, here) ? ' on' : '');
+    el.innerHTML = '<span class="nm"></span><span class="where"></span>';
+    el.querySelector('.nm').textContent = folderOf(f);
+    el.querySelector('.where').textContent = f;
+    el.title = f;
+    el.onclick = () => openFolder(f);
+    box.appendChild(el);
+  }
+}
+
+async function openFolder(path) {
+  if (!path || !path.trim()) return;
+  try {
+    await invoke('set_workspace', { path: path.trim() });
+  } catch (e) {
+    $('folderHint').textContent = String(e);
+    return;
+  }
+
+  // The transcript on screen belongs to the folder being left, so it goes
+  // rather than being appended to.
+  $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
+  await loadFolders();
+  loadWorkspace(); pollBus(); pollPresence();
+}
+
+$('folderOpen').onclick = () => openFolder($('folderPath').value);
+$('folderPath').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') { e.preventDefault(); openFolder($('folderPath').value); }
+});
+
+// ---------- drawer ----------
 function openRooms() {
   $('roomsDrawer').classList.add('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'false');
   $('roomsBtn').setAttribute('aria-expanded', 'true');
-  loadRooms(); loadThreads();
+  loadFolders();
 }
 function closeRooms() {
   $('roomsDrawer').classList.remove('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'true');
   $('roomsBtn').setAttribute('aria-expanded', 'false');
-  $('newConv').hidden = true;
 }
 const roomsOpen = () => $('roomsDrawer').classList.contains('on');
 
@@ -664,179 +705,6 @@ $('roomsClose').onclick = closeRooms;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && roomsOpen()) closeRooms();
 });
-
-// A room owns its transcript, its agents' memory and its folder, so switching
-// one is closer to opening a different project than to filtering a list.
-async function loadRooms() {
-  try {
-    rooms = await invoke('conversations');
-    activeRoom = await invoke('conversation_active');
-  } catch (_) { return; }
-  renderRooms();
-  renderRoomSettings();
-}
-
-function renderRooms() {
-  const here = rooms.find(r => r.slug === activeRoom);
-  $('roomsBtn').title = 'Rooms — currently in ' + (here ? here.name : 'none');
-
-  const box = $('conversations');
-  box.innerHTML = '';
-  for (const r of rooms) {
-    const el = document.createElement('div');
-    el.className = 'conv' + (r.slug === activeRoom ? ' on' : '');
-    el.innerHTML = '<span class="nm"></span><span class="where"></span>';
-    el.querySelector('.nm').textContent = r.name;
-    el.querySelector('.where').textContent = r.dir ? shortDir(r.dir) : '';
-    el.title = r.dir
-      ? r.name + ' — agents woken here work in ' + r.dir
-      : r.name + ' — agents woken here work in the shared workspace';
-    el.onclick = () => selectRoom(r.slug);
-    box.appendChild(el);
-  }
-}
-
-const shortDir = (d) => String(d).split(/[\\/]/).filter(Boolean).slice(-1)[0] || d;
-
-async function selectRoom(slug) {
-  if (slug === activeRoom) return;
-  try { await invoke('conversation_select', { slug }); }
-  catch (e) { $('status').textContent = String(e); return; }
-  activeRoom = slug;
-  // The transcript on screen belongs to the room being left, so it goes
-  // rather than being appended to.
-  $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
-  renderRooms(); renderRoomSettings();
-  pollBus(); pollPresence();
-  // Deliberately stays open. Picking a room is usually the first of several
-  // things — check its threads, look at another room, set a folder — and
-  // closing after each one turns setting up into a sequence of reopenings.
-  // It closes when asked: Escape, the backdrop, or the buttons.
-}
-
-$('newConvBtn').onclick = () => {
-  $('newConv').hidden = !$('newConv').hidden;
-  if (!$('newConv').hidden) $('convName').focus();
-};
-$('convCancel').onclick = () => {
-  $('newConv').hidden = true;
-  $('convName').value = ''; $('convDir').value = '';
-};
-$('convCreate').onclick = async () => {
-  const name = $('convName').value.trim();
-  if (!name) { $('convName').focus(); return; }
-  try {
-    const made = await invoke('conversation_create', { name, dir: $('convDir').value.trim() || null });
-    $('convCancel').onclick();
-    await loadRooms();
-    selectRoom(made.slug);
-  } catch (e) { $('status').textContent = String(e); }
-};
-
-// ---------- threads ----------
-// Every thread the agent has, unfiltered. A thread carries the folder it was
-// held in and can only be resumed from there, so choosing a thread is what
-// chooses where that agent works — not the other way around, which is how
-// this was built the first time and why it made no sense.
-async function loadThreads() {
-  for (const a of KNOWN) {
-    try { threadsFor[a.id] = await invoke('threads', { agent: a.id }); }
-    catch (_) { threadsFor[a.id] = []; }
-  }
-  renderRoomSettings();
-}
-
-const folderOf = (p) => String(p || '').split(/[\\/]/).filter(Boolean).slice(-1)[0] || '';
-
-function renderRoomSettings() {
-  const room = rooms.find(r => r.slug === activeRoom);
-  $('settingsTitle').textContent = room ? room.name : 'Room';
-
-  // Left alone while being typed in, or a refresh would rewrite the field
-  // under the cursor.
-  if (document.activeElement !== $('sharedDir')) {
-    $('sharedDir').value = (room && room.dir) || '';
-  }
-  $('sharedHint').textContent = (room && room.dir)
-    ? 'Where agents in this room leave things for each other.'
-    : 'Using the Consortium workspace.';
-
-  const box = $('agentSections');
-  box.innerHTML = '';
-  for (const a of KNOWN) box.appendChild(agentSection(a, room));
-}
-
-function agentSection(agent, room) {
-  const chosen = room && room.sessions && room.sessions[agent.id];
-  const list = threadsFor[agent.id] || [];
-
-  const el = document.createElement('div');
-  el.className = 'agent-sec';
-  el.innerHTML =
-    '<h4><span class="dot ' + agent.dot + '"></span>' + agent.name + '</h4>' +
-    '<select></select>' +
-    '<button class="ghost wide"></button>' +
-    '<div class="hint"></div>';
-
-  const pick = el.querySelector('select');
-  const own = document.createElement('option');
-  own.value = '';
-  own.textContent = 'This room\u2019s own thread';
-  pick.appendChild(own);
-
-  for (const t of list) {
-    const o = document.createElement('option');
-    o.value = t.id;
-    // Folder as well as title: two threads can share a name, and the folder
-    // is where this agent would end up working.
-    o.textContent = t.title + (folderOf(t.dir) ? ' \u00b7 ' + folderOf(t.dir) : '') +
-                    ' \u00b7 ' + agoOf(t.age_secs);
-    if (chosen && chosen.id === t.id) o.selected = true;
-    pick.appendChild(o);
-  }
-
-  const go = el.querySelector('button');
-  const hint = el.querySelector('.hint');
-  go.textContent = 'Use this thread';
-  go.disabled = !list.length;
-  hint.textContent =
-    !list.length ? 'No ' + agent.name + ' threads found on this machine.'
-    : chosen     ? 'Working in ' + chosen.dir
-                 : 'Starts its own thread in the shared folder.';
-
-  go.onclick = async () => {
-    const id = pick.value;
-    const thread = list.find(t => t.id === id);
-    try {
-      if (!thread) {
-        await invoke('conversation_detach', { slug: activeRoom, agent: agent.id });
-        $('status').textContent = agent.name + ' is back on this room\u2019s own thread.';
-      } else {
-        await invoke('conversation_attach', {
-          slug: activeRoom, agent: agent.id, session: id, sessionDir: thread.dir
-        });
-        $('status').textContent =
-          agent.name + ' continues \u201c' + thread.title + '\u201d in ' + thread.dir;
-      }
-      await loadRooms();
-      renderRoomSettings();
-    } catch (e) { hint.textContent = String(e); }
-  };
-  return el;
-}
-
-// The shared folder belongs to the room rather than to any one agent, which
-// is why it sits outside the agent blocks.
-$('sharedSave').onclick = async () => {
-  const dir = $('sharedDir').value.trim() || null;
-  try {
-    await invoke('conversation_set_shared', { slug: activeRoom, dir });
-    await loadRooms();
-    renderRoomSettings();
-    $('status').textContent = dir ? 'Shared folder set to ' + dir
-                                  : 'Shared folder back to the Consortium workspace.';
-  } catch (e) { $('sharedHint').textContent = String(e); }
-};
 
 // ---------- participants ----------
 function renderParticipants() {
@@ -1230,7 +1098,7 @@ $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
 $('refreshBtn').onclick = () => {
-  loadWorkspace(); pollBus(); pollPresence(); checkCli(); loadRooms(); loadThreads();
+  loadWorkspace(); pollBus(); pollPresence(); checkCli(); loadFolders();
 };
 
 // Two clicks rather than a dialog. The first says what is about to happen,

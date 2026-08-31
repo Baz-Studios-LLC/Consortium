@@ -90,15 +90,23 @@ channel per adapter rather than a lock somebody could forget to take.
   artifact. `claude auth status` said `loggedIn: true` — stored state,
   not a live check, so it lied. `claude auth login` fixed it.
 
-## Conversations
+## The folder is the room
 
-A room per piece of work. Each owns its transcript, its session per agent,
-and its directory — so an agent woken in `#bazmail` remembers only what was
-said there and is already standing in the right repository.
+Point Consortium at a folder and that is the room: its chat lives in
+`<folder>/.consortium/messages.jsonl`, agents woken there work there, and
+their memory of it is derived from its path. Point it somewhere else and
+that is a different room. Nothing is named, created, or chosen.
 
-Session ids are **derived**, not stored: UUIDv5 over `<slug>/<agent>`. Same
-id after a restart, a reinstall, or on a machine that never saw the config.
-An override attaches a session that already exists.
+This replaced a design with its own list of rooms, each with a name, a
+directory and a thread picked per agent. It worked and it asked too much:
+three things to set up before anyone could speak, and a picker whose whole
+job was to answer a question the folder already answered.
+
+Threads are **derived**: UUIDv5 over `<folder>/<agent>`, lowercased and with
+trailing separators trimmed so one folder typed two ways is one room. The
+first wake creates the thread, every later wake resumes it. Nothing stored,
+so nothing to lose or fall out of step. If an id is ever wrong, the agent
+says so — a better error than any check made on its behalf.
 
 What the Claude CLI actually does, established by running it:
 
@@ -113,11 +121,14 @@ So the first turn creates and the rest resume, decided by trying and reading
 the answer. Tracking it in memory would be wrong on the first restart —
 exactly when it would still look correct.
 
-**Sessions are scoped to their working directory.** Resuming from anywhere
-else finds nothing. Verified: the same id resolved in one folder and was
-"not found" in another. Hence a room always runs in its own directory,
-moving one costs it its memory, and attaching an existing session checks the
-folders match and refuses with the reason.
+**Threads are scoped to their folder.** Resuming from anywhere else finds
+nothing. Verified: the same id resolved in one folder and was "not found" in
+another. Another reason the folder is the room — the two cannot drift apart
+if they are the same thing.
+
+The chosen folder is remembered in `~/.consortium/workspace`, outside any
+room, because the CLI is a separate process that has to agree about where it
+is. `CONSORTIUM_HOME` overrides it.
 
 ## Next
 

@@ -9,67 +9,134 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+fn home() -> PathBuf {
+    let home = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_else(|_| ".".into());
+    PathBuf::from(home)
+}
+
+/// Where the chosen folder is remembered.
+///
+/// Outside any workspace, because it has to survive being pointed somewhere
+/// else, and beside the home directory rather than in app storage because the
+/// CLI is a separate process that has to agree about which room it is in.
+fn choice_path() -> PathBuf {
+    let dir = home().join(".consortium");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("workspace")
+}
+
+/// The folder this room lives in.
+///
+/// The folder *is* the room: its chat, its files and the threads agents keep
+/// there all hang off this one path. The environment wins so a test or a
+/// scripted run can point somewhere else without disturbing the choice.
 pub fn workspace() -> PathBuf {
     if let Ok(p) = std::env::var("CONSORTIUM_HOME") {
         return PathBuf::from(p);
     }
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join("Documents").join("Consortium Workspace")
+    if let Ok(saved) = fs::read_to_string(choice_path()) {
+        let saved = saved.trim();
+        if !saved.is_empty() {
+            return PathBuf::from(saved);
+        }
+    }
+    home().join("Documents").join("Consortium Workspace")
 }
 
-/// Posts into the room this process is talking in.
-pub fn post(who: &str, text: &str) {
-    post_to(&crate::conversation::active(), who, text)
+/// Moves the room to another folder, and remembers it.
+///
+/// Remembering is the point: this used to live only in the window's own state,
+/// so the file list and the watcher moved while the chat stayed behind, and a
+/// restart forgot the whole thing.
+pub fn set_workspace(path: &Path) -> Result<(), String> {
+    fs::create_dir_all(path).map_err(|e| format!("could not open {}: {e}", path.display()))?;
+    fs::write(choice_path(), path.to_string_lossy().as_bytes())
+        .map_err(|e| format!("could not remember that folder: {e}"))?;
+    remember_recent(path);
+    log(&format!("room is now {}", path.display()));
+    Ok(())
 }
 
-/// Everything belonging to one conversation lives in one directory.
-fn conversation_dir(slug: &str) -> PathBuf {
-    let dir = workspace()
+fn recents_path() -> PathBuf {
+    home().join(".consortium").join("recent")
+}
+
+/// Folders used before, most recent first.
+///
+/// Switching rooms is a thing people do repeatedly and in a small set; asking
+/// them to retype a path each time would be the same mistake as the thread
+/// picker, in a different place.
+pub fn recent_workspaces() -> Vec<String> {
+    let mut out: Vec<String> = fs::read_to_string(recents_path())
+        .unwrap_or_default()
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect();
+    let here = workspace().to_string_lossy().into_owned();
+    if !out.iter().any(|p| same_folder(p, &here)) {
+        out.insert(0, here);
+    }
+    out.truncate(12);
+    out
+}
+
+fn remember_recent(path: &Path) {
+    let entry = path.to_string_lossy().into_owned();
+    let mut list: Vec<String> = vec![entry.clone()];
+    for old in recent_workspaces() {
+        if !same_folder(&old, &entry) {
+            list.push(old);
+        }
+    }
+    list.truncate(12);
+    let _ = fs::write(recents_path(), list.join("\n"));
+}
+
+/// Case and trailing separators are how a path was typed, not which folder it
+/// is; two spellings of one folder must not become two entries.
+fn same_folder(a: &str, b: &str) -> bool {
+    let norm = |s: &str| s.trim_end_matches(['/', '\\']).to_lowercase();
+    norm(a) == norm(b)
+}
+
+
+/// Moves a chat left in the conversations layout back to its folder.
+///
+/// An earlier design filed each room under .consortium/conversations/<name>.
+/// The folder is the room now, so its chat belongs at the top. Keyed on the
+/// new file being absent, so it happens once and never overwrites anything.
+pub fn migrate() {
+    let now = workspace().join(".consortium").join("messages.jsonl");
+    if now.exists() {
+        return;
+    }
+
+    let old = workspace()
         .join(".consortium")
         .join("conversations")
-        .join(slug);
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
-/// Moves a room that predates conversations into the first one.
-///
-/// Keyed on the old file still being there, so it happens once and costs an
-/// `exists` check afterwards. Done lazily rather than at startup because the
-/// CLI is a separate process that may well run first, and a migration only
-/// the window performs would split the room in half.
-pub fn migrate() {
-    let old = workspace().join(".consortium").join("messages.jsonl");
+        .join("general")
+        .join("messages.jsonl");
     if !old.exists() {
         return;
     }
-
-    let dest = conversation_dir("general").join("messages.jsonl");
-    // Never over an existing room. If both are somehow present, the one that
-    // conversations already know about wins and the old file stays put for a
-    // human to look at.
-    if dest.exists() {
-        return;
-    }
-    match fs::rename(&old, &dest) {
-        Ok(()) => log("migrated the existing room into the 'general' conversation"),
-        Err(e) => log(&format!("could not migrate the existing room: {e}")),
+    match fs::rename(&old, &now) {
+        Ok(()) => log("moved the chat back out of conversations/general"),
+        Err(e) => log(&format!("could not move the chat back: {e}")),
     }
 }
-
-pub fn log_path_for(slug: &str) -> PathBuf {
-    migrate();
-    conversation_dir(slug).join("messages.jsonl")
-}
-
-/// The room this process is talking in.
+/// The chat in this folder.
 pub fn log_path() -> PathBuf {
-    log_path_for(&crate::conversation::active())
+    migrate();
+    let dir = workspace().join(".consortium");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("messages.jsonl")
 }
 
 /// Empties the room, keeping what was in it.
@@ -79,13 +146,13 @@ pub fn log_path() -> PathBuf {
 /// that destroys history on a single click is a button people are right to be
 /// afraid of. Archives are numbered rather than timestamped so clearing twice
 /// in a second cannot overwrite the first.
-pub fn archive_for(slug: &str) -> Result<PathBuf, String> {
-    let path = log_path_for(slug);
+pub fn archive() -> Result<PathBuf, String> {
+    let path = log_path();
     if !path.exists() {
         return Err("there is nothing to clear".into());
     }
 
-    let dir = conversation_dir(slug).join("archive");
+    let dir = workspace().join(".consortium").join("archive");
     fs::create_dir_all(&dir).map_err(|e| format!("could not make an archive: {e}"))?;
 
     let mut n = 1;
@@ -146,16 +213,10 @@ pub fn log(message: &str) {
 }
 
 /// Where a given reader got to last time, so `read` only shows what's new.
-pub fn cursor_path_for(conversation: &str, who: &str) -> PathBuf {
-    // Per conversation: how far someone has read in one room says nothing
-    // about how far they have read in another.
-    let dir = conversation_dir(conversation).join("cursors");
+pub fn cursor_path(who: &str) -> PathBuf {
+    let dir = workspace().join(".consortium").join("cursors");
     let _ = fs::create_dir_all(&dir);
     dir.join(format!("{}.cursor", slug(who)))
-}
-
-pub fn cursor_path(who: &str) -> PathBuf {
-    cursor_path_for(&crate::conversation::active(), who)
 }
 
 pub fn slug(s: &str) -> String {
@@ -413,10 +474,6 @@ pub fn presence() -> Vec<(String, String, u64)> {
         .collect()
 }
 
-pub fn read_lines_for(slug: &str) -> Vec<String> {
-    let Ok(f) = File::open(log_path_for(slug)) else { return Vec::new() };
-    BufReader::new(f).lines().map_while(Result::ok).filter(|l| !l.trim().is_empty()).collect()
-}
 
 pub fn read_lines() -> Vec<String> {
     let Ok(f) = File::open(log_path()) else { return Vec::new() };
@@ -494,7 +551,7 @@ pub fn mentions(text: &str) -> Vec<String> {
     found
 }
 
-pub fn post_to(conversation: &str, who: &str, text: &str) {
+pub fn post(who: &str, text: &str) {
     // Recipients are stored as a comma-separated string rather than a JSON
     // array. The reader in this file is hand-rolled and understands strings and
     // scalars; teaching it arrays to express a list of two short names is more
@@ -518,7 +575,7 @@ pub fn post_to(conversation: &str, who: &str, text: &str) {
     // believed it had gone quiet. That cost an hour of two agents waiting on
     // each other. A tool that lies about whether it did the thing is worse than
     // one that cannot do it, because the second kind you can work around.
-    let path = log_path_for(conversation);
+    let path = log_path();
     let written = OpenOptions::new()
         .create(true)
         .append(true)

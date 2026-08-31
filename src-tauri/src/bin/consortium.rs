@@ -15,10 +15,8 @@
 
 #[path = "../bus.rs"]
 mod bus;
-// The bus resolves paths through the active conversation, so the CLI needs
-// the same notion of where it is talking as the window does.
-#[path = "../conversation.rs"]
-mod conversation;
+// Nothing else to include: the folder is the room, and the bus works that out
+// the same way in both processes.
 
 use bus::{ls, post, read, share, wait, workspace};
 
