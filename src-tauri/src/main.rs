@@ -233,6 +233,16 @@ fn bus_post(from: String, text: String) {
     bus::post(&from, &text);
 }
 
+/// What version is actually running.
+///
+/// Worth showing now that updates apply silently on exit: an app that changes
+/// underneath you needs somewhere to say what it currently is, or "have you got
+/// the fix yet" becomes a question nobody can answer.
+#[tauri::command]
+fn app_version() -> &'static str {
+    env!("CARGO_PKG_VERSION")
+}
+
 /// Whether the agents can actually reach the CLI. Without it on PATH they have
 /// no way to talk, so the UI needs to say so plainly.
 #[tauri::command]
@@ -481,6 +491,7 @@ fn main() {
             bus_messages,
             bus_presence,
             bus_post,
+            app_version,
             cli_installed,
             install_cli,
             update_check,

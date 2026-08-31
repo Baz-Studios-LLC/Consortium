@@ -203,6 +203,12 @@
   button:disabled { opacity: .4; cursor: not-allowed; }
   button.stop { background: var(--err); color: #1a0c0c; }
   .hint { color: var(--muted); font-size: 10.5px; margin-top: 7px; }
+  /* Quiet by design: worth being able to find, not worth reading every time.
+     Monospace so a version number does not reflow as its digits change. */
+  .ver {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    -webkit-app-region: no-drag;
+  }
   .pill {
     display: none; align-items: center; gap: 6px; -webkit-app-region: no-drag;
     background: #1b3326; color: var(--ok); border: 1px solid #2c5740;
@@ -229,6 +235,7 @@
 <header>
   <button class="ghost icon" id="sidebarBtn" title="Hide the sidebar" aria-label="Hide the sidebar" aria-expanded="true">☰</button>
   <span class="brand">Consortium</span>
+  <span class="ver" id="appVer" title="Running version"></span>
   <span class="hint" id="sub">development studio</span>
   <div class="ws">
     <button class="pill" id="updatePill"></button>
@@ -253,7 +260,7 @@
 
 <footer>
   <div class="row">
-    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (↵ to send, ⇧↵ for a new line)"></textarea>
+    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (Enter sends · Shift+Enter for a new line)"></textarea>
     <button id="runBtn">Send</button>
     <button id="stopBtn" class="stop" style="display:none">Stop</button>
   </div>
@@ -342,6 +349,12 @@ $('sidebarBtn').onclick = () => {
 // Applied before first paint of the list so a collapsed sidebar does not
 // flash open on every launch.
 applyRail(localStorage.getItem(RAIL_KEY) === 'true');
+
+// Shown because updates now apply on their own. Without it, "which version are
+// you on" is a question the window cannot answer.
+invoke('app_version')
+  .then(v => { $('appVer').textContent = 'v' + v; })
+  .catch(() => { $('appVer').textContent = ''; });
 
 renderParticipants();
   } catch (_) { /* no presence yet */ }
