@@ -104,7 +104,7 @@
     transition: transform 190ms cubic-bezier(.2,.8,.2,1);
   }
   .drawer.on { transform: none; }
-  .drawer .sec-title { margin-top: 14px; }
+  .drawer .sec-title { margin-top: 0; }
   @media (prefers-reduced-motion: reduce) {
     .drawer, .drawer-scrim { transition: none; }
   }
@@ -325,13 +325,17 @@
   /* The lower half configures the room selected above, which was not visible
      when it was a bare list of controls: a heading naming that room, and
      labels on the fields, is the difference between settings and clutter. */
-  .room-settings { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--line); }
+  /* One gap above the divider, one below it. Three separate rules were each
+     adding their own, which is how 18 + 4 + 14 + 15 became a hole. */
+  .room-settings { margin-top: 14px; border-top: 1px solid var(--line); }
+  .room-settings .sec-title { padding: 12px 10px 4px; }
+  .room-settings .field-label:first-of-type { margin-top: 4px; }
   /* One block per agent, because each keeps its own threads and works
      wherever the thread it is continuing was held. Two agents sharing one
      picker was the confusion: it read as a setting for the room when it was
      only ever a setting for Claude. */
   .agent-sec {
-    margin-top: 16px; padding: 12px 12px 14px;
+    margin-top: 12px; padding: 11px 12px 13px;
     background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
   }
   .agent-sec h4 {
@@ -343,7 +347,7 @@
   .agent-sec .hint { margin-top: 6px; }
   .field-label {
     display: block; font-size: 11px; color: var(--muted);
-    padding: 0 2px 4px; margin-top: 12px;
+    padding: 0 2px 4px; margin-top: 10px;
   }
   /* Armed, not alarming: the second click empties the room, and the messages
      are archived rather than destroyed, so this warns without shouting. */
