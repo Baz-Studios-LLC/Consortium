@@ -74,6 +74,40 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
 
+  /* ---- rooms drawer ----
+     On the right and over the top, rather than in the rail. Choosing a room
+     is occasional — a few times a day — and it was taking permanent space
+     from the two things that are read constantly, the agent list and the
+     transcript. Over the top rather than beside: pushing the transcript
+     sideways would reflow every message to open a menu. */
+  .drawer-scrim {
+    position: fixed; inset: 0; background: rgba(0,0,0,.45);
+    opacity: 0; pointer-events: none; transition: opacity 160ms ease; z-index: 40;
+  }
+  .drawer-scrim.on { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; top: 0; right: 0; bottom: 0;
+    width: 320px; max-width: 86vw; z-index: 50;
+    background: var(--panel); border-left: 1px solid var(--line);
+    box-shadow: -20px 0 44px rgba(0,0,0,.5);
+    display: grid; grid-template-rows: auto 1fr; min-height: 0;
+    /* 101% so the shadow clears the edge as well as the panel. */
+    transform: translateX(101%);
+    transition: transform 190ms cubic-bezier(.2,.8,.2,1);
+  }
+  .drawer.on { transform: none; }
+  .drawer-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid var(--line);
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted);
+  }
+  .drawer-body { padding: 12px 14px 18px; overflow-y: auto; min-height: 0; }
+  .drawer-body .sec-title { margin-top: 20px; }
+  @media (prefers-reduced-motion: reduce) {
+    .drawer, .drawer-scrim { transition: none; }
+  }
+
   /* ---- main ---- */
   main {
     display: grid; grid-template-columns: 260px 1fr; min-height: 0;
@@ -237,21 +271,21 @@
   button.mini:hover { color: var(--text); }
   button.ghost.wide { width: 100%; margin-top: 5px; }
   .conv {
-    display: flex; align-items: baseline; gap: 6px; padding: 4px 7px;
-    border-radius: 6px; cursor: pointer; font-size: 11.5px;
+    display: flex; align-items: baseline; gap: 8px; padding: 8px 10px;
+    border-radius: 7px; cursor: pointer; font-size: 12.5px;
   }
   .conv:hover { background: var(--panel-2); }
   .conv.on { background: var(--panel-2); font-weight: 600; }
   /* The folder is the load-bearing detail, not decoration: it decides where
      agents work and which sessions can be attached. */
   .conv .where {
-    color: var(--muted); font-size: 10px; margin-left: auto;
-    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 96px;
+    color: var(--muted); font-size: 10.5px; margin-left: auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px;
   }
-  .newconv { display: grid; gap: 5px; padding: 6px 2px; }
+  .newconv { display: grid; gap: 6px; padding: 10px 0 2px; }
   .newconv input, #sessionPick {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
-    border-radius: 6px; padding: 5px 7px; font-size: 11px; font-family: inherit;
+    border-radius: 7px; padding: 7px 9px; font-size: 12px; font-family: inherit;
     width: 100%; box-sizing: border-box;
   }
   .newconv-row { display: flex; gap: 5px; }
@@ -304,28 +338,13 @@
     <button class="ghost" id="briefBtn">Briefing</button>
     <button class="ghost" id="clearBtn">Clear</button>
     <button class="ghost" id="refreshBtn">Refresh</button>
+    <button class="ghost" id="roomsBtn" title="Rooms">Rooms</button>
   </div>
 </header>
 
 <main>
   <aside>
     <div>
-      <div class="sec-title">Rooms <button class="mini" id="newConvBtn" title="New room">+</button></div>
-      <div id="conversations"></div>
-      <div class="newconv" id="newConv" hidden>
-        <input id="convName" placeholder="Name, e.g. BazMail">
-        <input id="convDir" placeholder="Project folder (optional)">
-        <div class="newconv-row">
-          <button class="ghost" id="convCreate">Create</button>
-          <button class="ghost" id="convCancel">Cancel</button>
-        </div>
-      </div>
-
-      <div class="sec-title">Claude session</div>
-      <select id="sessionPick"></select>
-      <button class="ghost wide" id="attachBtn">Continue this session</button>
-      <div class="hint" id="sessionHint"></div>
-
       <div class="sec-title">Agents</div>
       <div id="agents"></div>
       <div class="sec-title">Shared workspace</div>
@@ -334,6 +353,31 @@
   </aside>
   <div id="log"></div>
 </main>
+
+<div class="drawer-scrim" id="roomsScrim"></div>
+<div class="drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
+  <div class="drawer-head">
+    <span>Rooms</span>
+    <button class="ghost icon" id="roomsClose" title="Close" aria-label="Close">✕</button>
+  </div>
+  <div class="drawer-body">
+    <div id="conversations"></div>
+    <button class="ghost wide" id="newConvBtn">New room</button>
+    <div class="newconv" id="newConv" hidden>
+      <input id="convName" placeholder="Name, e.g. BazMail">
+      <input id="convDir" placeholder="Project folder — where agents will work">
+      <div class="newconv-row">
+        <button class="ghost" id="convCreate">Create</button>
+        <button class="ghost" id="convCancel">Cancel</button>
+      </div>
+    </div>
+
+    <div class="sec-title">Claude session</div>
+    <select id="sessionPick"></select>
+    <button class="ghost wide" id="attachBtn">Continue this session</button>
+    <div class="hint" id="sessionHint"></div>
+  </div>
+</div>
 
 <footer>
   <div class="row">
@@ -521,6 +565,29 @@ async function send() {
 }
 
 // ---------- rooms ----------
+// Opening is cheap and the contents can be stale — a session created since
+// the last look should be in the list — so both are refreshed on the way in.
+function openRooms() {
+  $('roomsDrawer').classList.add('on');
+  $('roomsDrawer').setAttribute('aria-hidden', 'false');
+  $('roomsScrim').classList.add('on');
+  loadRooms(); loadSessions();
+}
+function closeRooms() {
+  $('roomsDrawer').classList.remove('on');
+  $('roomsDrawer').setAttribute('aria-hidden', 'true');
+  $('roomsScrim').classList.remove('on');
+  $('newConv').hidden = true;
+}
+const roomsOpen = () => $('roomsDrawer').classList.contains('on');
+
+$('roomsBtn').onclick = () => (roomsOpen() ? closeRooms() : openRooms());
+$('roomsClose').onclick = closeRooms;
+$('roomsScrim').onclick = closeRooms;
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && roomsOpen()) closeRooms();
+});
+
 // A room owns its transcript, its agents' memory and its folder, so switching
 // one is closer to opening a different project than to filtering a list.
 async function loadRooms() {
@@ -533,6 +600,10 @@ async function loadRooms() {
 }
 
 function renderRooms() {
+  const here = rooms.find(r => r.slug === activeRoom);
+  $('roomsBtn').textContent = here ? here.name : 'Rooms';
+  $('roomsBtn').title = 'Rooms — currently in ' + (here ? here.name : 'none');
+
   const box = $('conversations');
   box.innerHTML = '';
   for (const r of rooms) {
@@ -561,6 +632,8 @@ async function selectRoom(slug) {
   $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
   renderRooms(); renderSessionPicker();
   pollBus(); pollPresence();
+  // The drawer has done its job; the transcript is what you wanted.
+  closeRooms();
 }
 
 $('newConvBtn').onclick = () => {
