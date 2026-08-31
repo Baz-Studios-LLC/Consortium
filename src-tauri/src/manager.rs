@@ -277,7 +277,8 @@ impl AgentManager {
             // Passed through rather than zeroed. An agent that cannot see how
             // deep the exchange has run cannot mention it when it declines.
             hops,
-            workspace: conversation::dir_for(slug).to_string_lossy().into_owned(),
+            workspace: conversation::dir_for(slug, agent).to_string_lossy().into_owned(),
+            shared: conversation::shared_dir(slug).to_string_lossy().into_owned(),
         };
 
         if queue.send(request).is_err() {

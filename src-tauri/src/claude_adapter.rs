@@ -61,7 +61,13 @@ impl ClaudeAdapter {
             "You have been addressed in the {} room of Consortium, a shared space, by {}.\n\n",
             request.conversation, request.sender
         ));
-        out.push_str(&format!("Working folder: {}\n\n", request.workspace));
+        out.push_str(&format!("Working folder: {}\n", request.workspace));
+        // Said explicitly, because an agent continuing a thread in its own
+        // repository has no other way to know where the room keeps things.
+        if request.shared != request.workspace {
+            out.push_str(&format!("Shared folder for this room: {}\n", request.shared));
+        }
+        out.push('\n');
 
         if !request.context.is_empty() {
             out.push_str("Recent conversation, oldest first:\n\n");
@@ -111,6 +117,12 @@ impl ClaudeAdapter {
             // room the turn came from, rather than wherever the window happens
             // to be pointing.
             .env("CONSORTIUM_CONVERSATION", &request.conversation);
+
+        // The room's shared folder as well, when it is somewhere else: an
+        // agent that cannot write there cannot hand anything to anyone.
+        if request.shared != request.workspace {
+            cmd.arg("--add-dir").arg(&request.shared);
+        }
 
         let output = cmd
             .output()
@@ -260,6 +272,7 @@ mod tests {
             }],
             hops: 0,
             workspace: std::env::temp_dir().to_string_lossy().into_owned(),
+            shared: std::env::temp_dir().to_string_lossy().into_owned(),
         }
     }
 

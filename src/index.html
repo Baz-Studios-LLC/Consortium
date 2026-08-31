@@ -312,7 +312,10 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 130px;
   }
   .newconv { display: grid; gap: 6px; padding: 10px 0 2px; }
-  .newconv input, #sessionPick {
+  /* [hidden] is a user-agent style and loses to any class that sets display,
+     so this has to say so itself or the create form never goes away. */
+  .newconv[hidden] { display: none; }
+  .newconv input, .field-row input, .room-settings select {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
     border-radius: 7px; padding: 7px 9px; font-size: 12px; font-family: inherit;
     width: 100%; box-sizing: border-box;
@@ -323,6 +326,21 @@
      when it was a bare list of controls: a heading naming that room, and
      labels on the fields, is the difference between settings and clutter. */
   .room-settings { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--line); }
+  /* One block per agent, because each keeps its own threads and works
+     wherever the thread it is continuing was held. Two agents sharing one
+     picker was the confusion: it read as a setting for the room when it was
+     only ever a setting for Claude. */
+  .agent-sec {
+    margin-top: 16px; padding: 12px 12px 14px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 9px;
+  }
+  .agent-sec h4 {
+    margin: 0 0 8px; font-size: 10.5px; text-transform: uppercase;
+    letter-spacing: .09em; color: var(--muted); font-weight: 600;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .agent-sec select { margin-bottom: 6px; }
+  .agent-sec .hint { margin-top: 6px; }
   .field-label {
     display: block; font-size: 11px; color: var(--muted);
     padding: 0 2px 4px; margin-top: 12px;
@@ -416,17 +434,14 @@
       <div class="room-settings">
         <div class="sec-title" id="settingsTitle">Room</div>
 
-        <label class="field-label" for="roomDir">Project folder</label>
+        <label class="field-label" for="sharedDir">Shared folder</label>
         <div class="field-row">
-          <input id="roomDir" placeholder="Shared workspace">
-          <button class="ghost" id="roomDirSave">Save</button>
+          <input id="sharedDir" placeholder="Consortium workspace">
+          <button class="ghost" id="sharedSave">Set</button>
         </div>
-        <div class="hint" id="dirHint"></div>
+        <div class="hint" id="sharedHint"></div>
 
-        <label class="field-label" for="sessionPick">Claude session</label>
-        <select id="sessionPick"></select>
-        <button class="ghost wide" id="attachBtn">Continue this session</button>
-        <div class="hint" id="sessionHint"></div>
+        <div id="agentSections"></div>
       </div>
     </div>
   </div>
@@ -478,7 +493,7 @@ let presence = {};          // name -> {state, age_secs}
 let managed = {};           // lowercased name -> {state, detail}, agents we run
 let rooms = [];             // every conversation
 let activeRoom = 'general';
-let claudeSessions = [];    // sessions on this machine, newest first
+let threadsFor = {};        // agent id -> its threads, newest first
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -560,7 +575,7 @@ applyRail(localStorage.getItem(RAIL_KEY) === 'true');
 
 // Rooms first: the transcript and the session picker both depend on knowing
 // which room is showing.
-loadRooms().then(loadSessions);
+loadRooms().then(loadThreads);
 
 // Shown because updates now apply on their own. Without it, "which version are
 // you on" is a question the window cannot answer.
@@ -629,7 +644,7 @@ function openRooms() {
   $('roomsDrawer').setAttribute('aria-hidden', 'false');
   $('roomsBtn').setAttribute('aria-expanded', 'true');
   $('roomsScrim').classList.add('on');
-  loadRooms(); loadSessions();
+  loadRooms(); loadThreads();
 }
 function closeRooms() {
   $('roomsDrawer').classList.remove('on');
@@ -655,7 +670,7 @@ async function loadRooms() {
     activeRoom = await invoke('conversation_active');
   } catch (_) { return; }
   renderRooms();
-  renderSessionPicker();
+  renderRoomSettings();
 }
 
 function renderRooms() {
@@ -688,7 +703,7 @@ async function selectRoom(slug) {
   // The transcript on screen belongs to the room being left, so it goes
   // rather than being appended to.
   $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
-  renderRooms(); renderSessionPicker();
+  renderRooms(); renderRoomSettings();
   pollBus(); pollPresence();
   // The drawer has done its job; the transcript is what you wanted.
   closeRooms();
@@ -713,78 +728,109 @@ $('convCreate').onclick = async () => {
   } catch (e) { $('status').textContent = String(e); }
 };
 
-// ---------- sessions ----------
-// Only sessions held in this room's folder are offered. Claude Code resolves
-// a session relative to the working directory, so any other one would be
-// accepted here and fail on the first wake with 'No conversation found'.
-async function loadSessions() {
-  try { claudeSessions = await invoke('claude_sessions'); }
-  catch (_) { claudeSessions = []; }
-  renderSessionPicker();
+// ---------- threads ----------
+// Every thread the agent has, unfiltered. A thread carries the folder it was
+// held in and can only be resumed from there, so choosing a thread is what
+// chooses where that agent works — not the other way around, which is how
+// this was built the first time and why it made no sense.
+async function loadThreads() {
+  for (const a of KNOWN) {
+    try { threadsFor[a.id] = await invoke('threads', { agent: a.id }); }
+    catch (_) { threadsFor[a.id] = []; }
+  }
+  renderRoomSettings();
 }
 
-const sameDir = (a, b) =>
-  String(a || '').replace(/[\\/]+$/, '').toLowerCase() ===
-  String(b || '').replace(/[\\/]+$/, '').toLowerCase();
+const folderOf = (p) => String(p || '').split(/[\\/]/).filter(Boolean).slice(-1)[0] || '';
 
-function renderSessionPicker() {
-  const pick = $('sessionPick');
+function renderRoomSettings() {
   const room = rooms.find(r => r.slug === activeRoom);
-  const dir = (room && room.dir) || null;
-  const usable = dir ? claudeSessions.filter(s => sameDir(s.dir, dir)) : [];
-
-  // Naming the room these settings belong to. Without it the folder and the
-  // session read as global, which is the opposite of what they are.
   $('settingsTitle').textContent = room ? room.name : 'Room';
-  if (document.activeElement !== $('roomDir')) $('roomDir').value = dir || '';
-  $('dirHint').textContent = dir
-    ? 'Agents woken here work in this folder.'
-    : 'Agents woken here work in the shared workspace.';
 
-  pick.innerHTML = '';
-  for (const s of usable) {
+  // Left alone while being typed in, or a refresh would rewrite the field
+  // under the cursor.
+  if (document.activeElement !== $('sharedDir')) {
+    $('sharedDir').value = (room && room.dir) || '';
+  }
+  $('sharedHint').textContent = (room && room.dir)
+    ? 'Where agents in this room leave things for each other.'
+    : 'Using the Consortium workspace.';
+
+  const box = $('agentSections');
+  box.innerHTML = '';
+  for (const a of KNOWN) box.appendChild(agentSection(a, room));
+}
+
+function agentSection(agent, room) {
+  const chosen = room && room.sessions && room.sessions[agent.id];
+  const list = threadsFor[agent.id] || [];
+
+  const el = document.createElement('div');
+  el.className = 'agent-sec';
+  el.innerHTML =
+    '<h4><span class="dot ' + agent.dot + '"></span>' + agent.name + '</h4>' +
+    '<select></select>' +
+    '<button class="ghost wide"></button>' +
+    '<div class="hint"></div>';
+
+  const pick = el.querySelector('select');
+  const own = document.createElement('option');
+  own.value = '';
+  own.textContent = 'This room\u2019s own thread';
+  pick.appendChild(own);
+
+  for (const t of list) {
     const o = document.createElement('option');
-    o.value = s.id;
-    o.textContent = s.title + ' · ' + agoOf(s.age_secs);
+    o.value = t.id;
+    // Folder as well as title: two threads can share a name, and the folder
+    // is where this agent would end up working.
+    o.textContent = t.title + (folderOf(t.dir) ? ' \u00b7 ' + folderOf(t.dir) : '') +
+                    ' \u00b7 ' + agoOf(t.age_secs);
+    if (chosen && chosen.id === t.id) o.selected = true;
     pick.appendChild(o);
   }
 
-  const attached = room && room.sessions && room.sessions.claude;
-  pick.disabled = !usable.length;
-  $('attachBtn').disabled = !usable.length;
-  $('sessionHint').textContent =
-    attached         ? 'This room is continuing a session you picked.'
-    : !dir           ? 'Set a project folder above to continue a session held there.'
-    : !usable.length ? 'No Claude sessions in this folder yet — this room starts its own.'
-                     : 'This room has its own session. Pick one above to continue that instead.';
+  const go = el.querySelector('button');
+  const hint = el.querySelector('.hint');
+  go.textContent = 'Use this thread';
+  go.disabled = !list.length;
+  hint.textContent =
+    !list.length ? 'No ' + agent.name + ' threads found on this machine.'
+    : chosen     ? 'Working in ' + chosen.dir
+                 : 'Starts its own thread in the shared folder.';
+
+  go.onclick = async () => {
+    const id = pick.value;
+    const thread = list.find(t => t.id === id);
+    try {
+      if (!thread) {
+        await invoke('conversation_detach', { slug: activeRoom, agent: agent.id });
+        $('status').textContent = agent.name + ' is back on this room\u2019s own thread.';
+      } else {
+        await invoke('conversation_attach', {
+          slug: activeRoom, agent: agent.id, session: id, sessionDir: thread.dir
+        });
+        $('status').textContent =
+          agent.name + ' continues \u201c' + thread.title + '\u201d in ' + thread.dir;
+      }
+      await loadRooms();
+      renderRoomSettings();
+    } catch (e) { hint.textContent = String(e); }
+  };
+  return el;
 }
 
-// Changing the folder drops any attached session, because a session cannot be
-// resumed from a different directory. Said plainly rather than discovered as a
-// failed wake later.
-$('roomDirSave').onclick = async () => {
-  const dir = $('roomDir').value.trim() || null;
+// The shared folder belongs to the room rather than to any one agent, which
+// is why it sits outside the agent blocks.
+$('sharedSave').onclick = async () => {
+  const dir = $('sharedDir').value.trim() || null;
   try {
-    await invoke('conversation_set_dir', { slug: activeRoom, dir });
+    await invoke('conversation_set_shared', { slug: activeRoom, dir });
     await loadRooms();
-    await loadSessions();
-    $('status').textContent = dir
-      ? 'This room now works in ' + dir
-      : 'This room now works in the shared workspace.';
-  } catch (e) { $('dirHint').textContent = String(e); }
-};
-
-$('attachBtn').onclick = async () => {
-  const id = $('sessionPick').value;
-  const chosen = claudeSessions.find(s => s.id === id);
-  if (!chosen) return;
-  try {
-    await invoke('conversation_attach', {
-      slug: activeRoom, agent: 'claude', session: id, sessionDir: chosen.dir
-    });
-    $('status').textContent = 'This room now continues "' + chosen.title + '".';
-    await loadRooms();
-  } catch (e) { $('status').textContent = String(e); }
+    renderRoomSettings();
+    $('status').textContent = dir ? 'Shared folder set to ' + dir
+                                  : 'Shared folder back to the Consortium workspace.';
+  } catch (e) { $('sharedHint').textContent = String(e); }
 };
 
 // ---------- participants ----------
@@ -1122,7 +1168,7 @@ $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
 $('refreshBtn').onclick = () => {
-  loadWorkspace(); pollBus(); pollPresence(); checkCli(); loadRooms(); loadSessions();
+  loadWorkspace(); pollBus(); pollPresence(); checkCli(); loadRooms(); loadThreads();
 };
 
 // Two clicks rather than a dialog. The first says what is about to happen,

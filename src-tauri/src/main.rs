@@ -365,9 +365,14 @@ fn conversation_create(name: String, dir: Option<String>) -> Result<conversation
     conversation::create(&name, dir)
 }
 
-/// Changes where a room works. Empty puts it back in the shared workspace.
 #[tauri::command]
-fn conversation_set_dir(slug: String, dir: Option<String>) -> Result<(), String> {
+fn conversation_detach(slug: String, agent: String) -> Result<(), String> {
+    conversation::detach_session(&slug, &agent)
+}
+
+/// Sets the room's shared folder. Empty puts it back to the workspace.
+#[tauri::command]
+fn conversation_set_shared(slug: String, dir: Option<String>) -> Result<(), String> {
     let dir = dir
         .map(|d| d.trim().to_string())
         .filter(|d| !d.is_empty())
@@ -378,21 +383,20 @@ fn conversation_set_dir(slug: String, dir: Option<String>) -> Result<(), String>
             return Err(format!("{} is not a folder on this machine", d.display()));
         }
     }
-    conversation::set_dir(&slug, dir)
+    conversation::set_shared(&slug, dir)
 }
 
-/// Claude Code sessions on this machine, for choosing one to continue.
+/// The threads this agent already has, for choosing one to continue.
 #[tauri::command]
-fn claude_sessions() -> Vec<sessions::SessionInfo> {
-    sessions::list()
+fn threads(agent: String) -> Vec<sessions::Thread> {
+    sessions::list(&agent)
 }
 
-/// Points a room's agent at a session that already exists.
+/// Points a room's agent at a thread it already has.
 ///
-/// The directory is checked because sessions are scoped to one: attaching a
-/// session held somewhere else produces a room that looks configured and
-/// fails on its first wake with 'No conversation found'. Better to refuse now
-/// and say why.
+/// The thread's folder is stored with it, because that is where the agent
+/// will work: a thread only resumes in the directory it was held in. No
+/// check is needed here — choosing the thread is what chooses the folder.
 #[tauri::command]
 fn conversation_attach(
     slug: String,
@@ -400,22 +404,7 @@ fn conversation_attach(
     session: String,
     session_dir: String,
 ) -> Result<(), String> {
-    let room_dir = conversation::dir_for(&slug);
-    let same = std::fs::canonicalize(&room_dir)
-        .ok()
-        .zip(std::fs::canonicalize(&session_dir).ok())
-        .map(|(a, b)| a == b)
-        .unwrap_or(false);
-
-    if !same {
-        return Err(format!(
-            "That session was held in {session_dir}, and this room works in {}. \
-             Claude Code can only resume a session from the folder it was held in, \
-             so point the room at that folder first.",
-            room_dir.display()
-        ));
-    }
-    conversation::attach_session(&slug, &agent, &session)
+    conversation::attach_session(&slug, &agent, &session, &session_dir)
 }
 
 #[tauri::command]
@@ -793,8 +782,9 @@ fn main() {
             conversation_select,
             conversation_create,
             conversation_attach,
-            conversation_set_dir,
-            claude_sessions,
+            conversation_set_shared,
+            conversation_detach,
+            threads,
             app_version,
             cli_installed,
             install_cli,

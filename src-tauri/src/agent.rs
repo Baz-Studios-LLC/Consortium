@@ -94,6 +94,11 @@ pub struct WakeRequest {
     /// not assumed. A conversation must therefore always run in the same
     /// place, and moving one costs it its memory.
     pub workspace: String,
+    /// The room's shared folder, where agents leave things for each other.
+    ///
+    /// Separate from `workspace`: an agent continuing a thread held in its own
+    /// repository still needs somewhere common to put what it produces.
+    pub shared: String,
 }
 
 #[derive(Debug, Clone)]

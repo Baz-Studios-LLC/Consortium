@@ -33,21 +33,36 @@ use crate::bus;
 /// to be stable and unlike anyone else's.
 const NAMESPACE: uuid::Uuid = uuid::uuid!("6f9c1a52-3d0e-4b7a-9c21-8e5f4a0d1b33");
 
+/// A thread an agent already has, and the folder it belongs to.
+///
+/// The folder travels with the id because resuming needs both: the same id
+/// resolves in the directory it was held in and nowhere else.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRef {
+    pub id: String,
+    pub dir: String,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Conversation {
     /// Identity. Used in paths and in derived session ids, so renaming the
     /// display name never costs an agent its memory.
     pub slug: String,
     pub name: String,
-    /// Where agents woken here should work. None means the Consortium
-    /// workspace — the shared folder, which is the right default for a room
-    /// that is not about a particular repository.
+    /// The shared folder for this room: where agents exchange files with
+    /// each other and with you. None means the Consortium workspace.
+    ///
+    /// Deliberately not where an agent works. An agent works wherever its
+    /// thread was held, because a thread cannot be resumed from anywhere
+    /// else — so the thread decides the folder, and this is the common
+    /// ground they meet on.
     #[serde(default)]
     pub dir: Option<PathBuf>,
-    /// Agent name to an existing session id, when this conversation should
-    /// continue a conversation that started somewhere else. Empty is normal.
+    /// Agent name to the thread it continues here.
+    ///
+    /// Empty is normal and means the room uses its own derived session.
     #[serde(default)]
-    pub sessions: HashMap<String, String>,
+    pub sessions: HashMap<String, SessionRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -149,29 +164,20 @@ pub fn create(name: &str, dir: Option<PathBuf>) -> Result<Conversation, String> 
     Ok(made)
 }
 
-/// Moves a conversation to a different folder, or back to the workspace.
+/// Sets the room's shared folder, or puts it back to the workspace.
 ///
-/// Sessions are scoped to the directory they were held in, so a room that
-/// moves cannot resume what it said in the old place: the derived id will not
-/// be found there and a fresh session starts. That is a real cost and the
-/// caller should say so, but it is the caller's decision to make — a room
-/// created without a folder is otherwise stuck without one forever.
-pub fn set_dir(slug: &str, dir: Option<PathBuf>) -> Result<(), String> {
+/// Attached threads are left alone: each carries its own folder, so moving
+/// the common ground does not invalidate anyone's memory.
+pub fn set_shared(slug: &str, dir: Option<PathBuf>) -> Result<(), String> {
     let mut store = load();
     let Some(conversation) = store.conversations.iter_mut().find(|c| c.slug == slug) else {
         return Err(format!("there is no conversation called {slug}"));
     };
 
-    // An attached session belongs to the old folder and cannot be resumed
-    // from the new one. Keeping it would fail on the next wake with 'No
-    // conversation found', which is a confusing way to learn this.
-    if conversation.dir != dir {
-        conversation.sessions.clear();
-    }
     conversation.dir = dir.clone();
     save(&store)?;
     bus::log(&format!(
-        "conversation: {slug} now works in {}",
+        "conversation: {slug} shares {}",
         dir.map(|d| d.display().to_string())
             .unwrap_or_else(|| "the shared workspace".into())
     ));
@@ -182,16 +188,35 @@ pub fn set_dir(slug: &str, dir: Option<PathBuf>) -> Result<(), String> {
 ///
 /// The way to say "this room continues that conversation" — including one
 /// started outside Consortium entirely.
-pub fn attach_session(slug: &str, agent: &str, session: &str) -> Result<(), String> {
+pub fn attach_session(slug: &str, agent: &str, id: &str, dir: &str) -> Result<(), String> {
     let mut store = load();
     let Some(conversation) = store.conversations.iter_mut().find(|c| c.slug == slug) else {
         return Err(format!("there is no conversation called {slug}"));
     };
-    conversation
-        .sessions
-        .insert(agent.to_lowercase(), session.to_string());
+    conversation.sessions.insert(
+        agent.to_lowercase(),
+        SessionRef {
+            id: id.to_string(),
+            dir: dir.to_string(),
+        },
+    );
     save(&store)?;
-    bus::log(&format!("conversation: {slug} now uses {session} for {agent}"));
+    bus::log(&format!("conversation: {slug} continues {id} for {agent} in {dir}"));
+    Ok(())
+}
+
+/// Puts an agent back on this room's own derived thread.
+///
+/// The counterpart to attaching. Without it, choosing a thread once would be
+/// permanent, and the only way back would be editing the config by hand.
+pub fn detach_session(slug: &str, agent: &str) -> Result<(), String> {
+    let mut store = load();
+    let Some(conversation) = store.conversations.iter_mut().find(|c| c.slug == slug) else {
+        return Err(format!("there is no conversation called {slug}"));
+    };
+    conversation.sessions.remove(&agent.to_lowercase());
+    save(&store)?;
+    bus::log(&format!("conversation: {slug} put {agent} back on its own thread"));
     Ok(())
 }
 
@@ -201,14 +226,28 @@ pub fn attach_session(slug: &str, agent: &str, session: &str) -> Result<(), Stri
 /// the same colleague across restarts without anything being written down.
 pub fn session_for(slug: &str, agent: &str) -> String {
     let agent = agent.to_lowercase();
-    if let Some(named) = get(slug).and_then(|c| c.sessions.get(&agent).cloned()) {
-        return named;
+    if let Some(chosen) = get(slug).and_then(|c| c.sessions.get(&agent).cloned()) {
+        return chosen.id;
     }
     uuid::Uuid::new_v5(&NAMESPACE, format!("{slug}/{agent}").as_bytes()).to_string()
 }
 
-/// Where an agent woken in this conversation should work.
-pub fn dir_for(slug: &str) -> PathBuf {
+/// Where this agent works in this room.
+///
+/// The thread's folder if one was chosen, because that is the only place the
+/// thread can be resumed from. Otherwise the shared folder, which is where a
+/// room with no particular repository belongs.
+pub fn dir_for(slug: &str, agent: &str) -> PathBuf {
+    let chosen = get(slug)
+        .and_then(|c| c.sessions.get(&agent.to_lowercase()).cloned())
+        .map(|s| PathBuf::from(s.dir))
+        .filter(|d| d.is_dir());
+
+    chosen.unwrap_or_else(|| shared_dir(slug))
+}
+
+/// The room's common ground: where agents leave things for each other.
+pub fn shared_dir(slug: &str) -> PathBuf {
     get(slug)
         .and_then(|c| c.dir)
         .filter(|d| d.is_dir())

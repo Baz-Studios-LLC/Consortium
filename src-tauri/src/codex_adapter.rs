@@ -510,6 +510,7 @@ mod tests {
             }],
             hops: 1,
             workspace: "C:\\room".into(),
+            shared: "C:\\room".into(),
         }
     }
 
