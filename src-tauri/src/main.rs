@@ -641,6 +641,17 @@ fn run_agent(app: AppHandle, req: RunRequest, studio: State<Studio>) -> Result<(
 struct BusMessage {
     from: String,
     text: String,
+    /// Unix seconds; 0 for messages written before timestamps existed.
+    at: u64,
+}
+
+#[derive(Serialize)]
+struct Presence {
+    who: String,
+    /// "listening" (blocked on wait, will see new messages), "active", or "away"
+    /// (turn ended — it cannot see anything new until the user gives it a turn).
+    state: String,
+    age_secs: u64,
 }
 
 #[tauri::command]
@@ -651,8 +662,17 @@ fn bus_messages() -> Vec<BusMessage> {
             Some(BusMessage {
                 from: bus::field(l, "from")?,
                 text: bus::field(l, "text")?,
+                at: bus::field(l, "at").and_then(|a| a.parse().ok()).unwrap_or(0),
             })
         })
+        .collect()
+}
+
+#[tauri::command]
+fn bus_presence() -> Vec<Presence> {
+    bus::presence()
+        .into_iter()
+        .map(|(who, state, age_secs)| Presence { who, state, age_secs })
         .collect()
 }
 
@@ -747,6 +767,7 @@ fn main() {
             update_check,
             update_install,
             bus_messages,
+            bus_presence,
             bus_post,
             cli_installed
         ])

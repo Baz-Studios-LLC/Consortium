@@ -120,6 +120,7 @@
     font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
     color: var(--muted); margin-bottom: 5px;
   }
+  .turn .when { text-transform: none; letter-spacing: 0; opacity: .65; margin-left: 7px; }
   .turn .body {
     white-space: pre-wrap; word-break: break-word;
     border-left: 2px solid var(--line); padding-left: 12px;
@@ -262,6 +263,7 @@ let agents = KNOWN.slice();
 let primary = localStorage.getItem('primary') || 'claude';
 let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
+let presence = {};          // name -> {state, age_secs}
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -270,14 +272,31 @@ const speakerClass = (from) => {
 };
 
 // ---------- transcript ----------
+const clockOf = (at) =>
+  at ? new Date(at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
+
 function renderMessage(m) {
   const el = document.createElement('div');
   el.className = 'turn ' + speakerClass(m.from);
-  el.innerHTML = '<div class="who"></div><div class="body"><div class="text"></div></div>';
-  el.querySelector('.who').textContent = m.from;
+  el.innerHTML = '<div class="who"><span class="nm"></span><span class="when"></span></div>' +
+                 '<div class="body"><div class="text"></div></div>';
+  el.querySelector('.nm').textContent = m.from;
+  el.querySelector('.when').textContent = clockOf(m.at);
   el.querySelector('.text').textContent = m.text;
   $('log').appendChild(el);
   $('log').scrollTop = $('log').scrollHeight;
+}
+
+const agoOf = (s) => s < 45 ? 'just now' : s < 5400 ? Math.round(s / 60) + 'm ago'
+                                          : Math.round(s / 3600) + 'h ago';
+
+async function pollPresence() {
+  try {
+    const rows = await invoke('bus_presence');
+    presence = {};
+    for (const r of rows) presence[r.who] = r;
+    renderParticipants();
+  } catch (_) { /* no presence yet */ }
 }
 
 async function pollBus() {
@@ -306,15 +325,25 @@ function renderParticipants() {
   box.innerHTML = '';
   for (const a of KNOWN) {
     const isPrimary = a.id === primary;
-    const active = seenFrom.has(a.name);
+    const p = presence[a.name];
+    const joined = seenFrom.has(a.name) || !!p;
+    const listening = p && p.state === 'listening';
     const el = document.createElement('div');
-    el.className = 'agent' + (active ? '' : ' off');
+    el.className = 'agent' + (listening ? '' : ' off');
     el.innerHTML =
-      '<span class="dot ' + (active ? a.dot : 'off') + '"></span>' +
+      '<span class="dot ' + (listening ? a.dot : 'off') + '"></span>' +
       '<span class="meta"><div class="nm"></div><div class="vr"></div></span>' +
       '<span class="role' + (isPrimary ? ' primary' : '') + '"></span>';
     el.querySelector('.nm').textContent = a.name;
-    el.querySelector('.vr').textContent = active ? 'in the room' : 'not joined yet';
+    // An agent only sees new messages while it is blocked on `wait`. Once its
+    // turn ends nothing can reach it, so say that rather than implying presence.
+    el.querySelector('.vr').textContent =
+      !joined      ? 'not joined yet'
+      : listening  ? 'listening · will see new messages'
+                   : 'away since ' + agoOf(p ? p.age_secs : 0) + ' · needs a turn';
+    el.title = listening
+      ? a.name + ' is blocked on `consortium wait` and will pick up your next message.'
+      : a.name + ' has finished its turn. Give it a turn in its own app to bring it back.';
     const badge = el.querySelector('.role');
     badge.textContent = isPrimary ? 'primary' : 'alt';
     if (!isPrimary) {
@@ -366,6 +395,22 @@ function briefingFor(agentId) {
     '    consortium share /path/to/file',
     '    consortium ls',
     '    consortium who',
+    '',
+    'STAYING REACHABLE — the most important part:',
+    'You only exist while you have a turn. The moment your turn ends you stop, ' +
+    'and anything posted afterwards will not reach you until the user gives you ' +
+    'a new turn. There is no notification that can wake you.',
+    '',
+    'So do not finish your turn while you are still expecting something. End it ' +
+    'by blocking on the room instead:',
+    '    consortium wait ' + me + ' --secs 120',
+    'That holds you open and returns the instant someone speaks. Handle what ' +
+    'comes back, then wait again. Keep doing that for as long as you have a ' +
+    'question outstanding or work in flight — several waits in a row is normal ' +
+    'and correct, not a mistake.',
+    '',
+    'When you are genuinely finished, `post` a short sign-off first so the others ' +
+    'know not to expect a reply, and then stop.',
     '',
     'How to use it well:',
     '- You decide what is worth saying. Your reasoning, tool calls and exploration ' +
@@ -473,7 +518,7 @@ $('briefBtn').onclick = openBriefing;
 $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
-$('refreshBtn').onclick = () => { loadWorkspace(); pollBus(); checkCli(); };
+$('refreshBtn').onclick = () => { loadWorkspace(); pollBus(); pollPresence(); checkCli(); };
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
 });
@@ -482,7 +527,9 @@ renderParticipants();
 checkCli();
 loadWorkspace();
 pollBus();
+pollPresence();
 setInterval(pollBus, 1500);              // the agents post whenever they like
+setInterval(pollPresence, 3000);
 setInterval(loadWorkspace, 4000);
 checkUpdate();
 setInterval(checkUpdate, 30 * 60 * 1000);

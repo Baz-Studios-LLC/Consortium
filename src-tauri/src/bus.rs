@@ -10,6 +10,7 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub fn workspace() -> PathBuf {
     if let Ok(p) = std::env::var("CONSORTIUM_HOME") {
@@ -87,6 +88,45 @@ pub fn field(line: &str, key: &str) -> Option<String> {
     Some(out)
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
+/// Presence is the only honest answer to "why didn't it reply?". An agent can
+/// only act while it holds a live turn, so we record whether it is currently
+/// blocked on `wait` (listening) or has finished its turn (away). Nothing here
+/// can wake a stopped agent — it just makes the difference visible.
+pub fn set_presence(who: &str, state: &str) {
+    let dir = workspace().join(".consortium").join("presence");
+    let _ = fs::create_dir_all(&dir);
+    let _ = fs::write(
+        dir.join(format!("{}.json", slug(who))),
+        format!("{{\"who\":\"{}\",\"state\":\"{}\",\"at\":{}}}", escape(who), state, now_secs()),
+    );
+}
+
+/// (who, state, seconds-since-update)
+pub fn presence() -> Vec<(String, String, u64)> {
+    let dir = workspace().join(".consortium").join("presence");
+    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
+    let now = now_secs();
+    entries
+        .flatten()
+        .filter_map(|e| {
+            let body = fs::read_to_string(e.path()).ok()?;
+            let who = field(&body, "who")?;
+            let state = field(&body, "state")?;
+            let at: u64 = body
+                .split("\"at\":")
+                .nth(1)?
+                .trim_matches(|c: char| !c.is_ascii_digit())
+                .parse()
+                .ok()?;
+            Some((who, state, now.saturating_sub(at)))
+        })
+        .collect()
+}
+
 pub fn read_lines() -> Vec<String> {
     let Ok(f) = File::open(log_path()) else { return Vec::new() };
     BufReader::new(f).lines().map_while(Result::ok).filter(|l| !l.trim().is_empty()).collect()
@@ -104,20 +144,42 @@ pub fn set_cursor(who: &str, n: usize) {
 }
 
 pub fn render(lines: &[String]) -> String {
+    let now = now_secs();
     lines
         .iter()
-        .filter_map(|l| Some(format!("{}: {}", field(l, "from")?, field(l, "text")?)))
+        .filter_map(|l| {
+            let age = field(l, "at")
+                .and_then(|a| a.parse::<u64>().ok())
+                .map(|at| format!(" ({})", ago(now.saturating_sub(at))))
+                .unwrap_or_default();
+            Some(format!("{}{}: {}", field(l, "from")?, age, field(l, "text")?))
+        })
         .collect::<Vec<_>>()
         .join("\n\n")
 }
 
+/// Compact relative age, e.g. "just now", "4m ago".
+pub fn ago(secs: u64) -> String {
+    match secs {
+        0..=44 => "just now".into(),
+        45..=5400 => format!("{}m ago", (secs + 30) / 60),
+        _ => format!("{}h ago", (secs + 1800) / 3600),
+    }
+}
+
 pub fn post(who: &str, text: &str) {
-    let line = format!("{{\"from\":\"{}\",\"text\":\"{}\"}}\n", escape(who), escape(text));
+    let line = format!(
+        "{{\"from\":\"{}\",\"text\":\"{}\",\"at\":\"{}\"}}\n",
+        escape(who),
+        escape(text),
+        now_secs()
+    );
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
         let _ = f.write_all(line.as_bytes());
     }
     // A speaker has by definition seen everything up to its own message.
     set_cursor(who, read_lines().len());
+    set_presence(who, "active");
     println!("posted");
 }
 
@@ -142,6 +204,7 @@ pub fn read(who: &str, all: bool) {
 pub fn wait(who: &str, secs: u64) {
     let start = std::time::Instant::now();
     let baseline = read_lines().len();
+    set_presence(who, "listening");
     loop {
         let lines = read_lines();
         if lines.len() > baseline {
@@ -152,12 +215,19 @@ pub fn wait(who: &str, secs: u64) {
                 .collect();
             if !fresh.is_empty() {
                 set_cursor(who, lines.len());
+                set_presence(who, "active");
                 println!("{}", render(&fresh));
                 return;
             }
         }
         if start.elapsed().as_secs() >= secs {
-            println!("(timed out after {}s — nobody replied)", secs);
+            set_presence(who, "away");
+            println!(
+                "(nothing after {}s. If you still have work to do, wait again — \
+each wait keeps you reachable. If you are done, say so with `post` before you \
+stop, so the others know not to expect a reply.)",
+                secs
+            );
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(700));

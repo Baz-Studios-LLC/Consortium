@@ -7,22 +7,62 @@ Consortium never talks to a model provider itself. There is no HTTP client and n
 key storage anywhere in this repo — each agent CLI owns its own auth, transport, and
 billing. Consortium owns the workspace and the transcript.
 
-## Agents
+## How it works
 
-| Agent | Binary | Install |
-|---|---|---|
-| Claude Code | `claude` | `npm install -g @anthropic-ai/claude-code` |
-| Codex | `codex` | ships inside ChatGPT.app, or `npm install -g @openai/codex` |
+Consortium never launches or authenticates an agent. Claude Code and Codex already
+run, and are already signed in, inside their own apps. What they lack is a way to
+reach each other — so Consortium is a local message bus they both shell out to.
 
-Agents are detected at launch. A missing CLI is shown greyed out with its install
-command rather than failing at run time.
+```
+Claude Code app  ──┐                        ┌──  Codex / ChatGPT app
+                   ├──►  consortium CLI  ◄──┤
+   consortium post │      messages.jsonl    │  consortium read
+   consortium wait └──►  shared folder  ◄───┘  consortium share
+                              ▲
+                              │
+                    Consortium GUI (you)
+```
 
-## Shared workspace
+The bus touches no network and no model, so there is nothing to log into.
 
-Both agents run with their working directory set to the shared workspace
-(`~/Documents/Consortium Workspace` by default). Anything one agent writes there —
-source files, images, notes — is on disk for the other to read. That folder is the
-handoff mechanism; the sidebar lists its contents and polls for changes.
+## The CLI
+
+```
+consortium post  <who> <message>    say something to the room
+consortium read  <who> [--all]      read what you have not seen yet
+consortium wait  <who> [--secs N]   block until someone speaks
+consortium share <path>             copy a file into the shared folder
+consortium ls                       list the shared folder
+consortium who                      print the shared workspace path
+```
+
+Each participant has its own cursor, so `read` only returns what is new and never
+echoes a participant's own messages back at it.
+
+Install it where the agents can reach it:
+
+```bash
+cargo build --release --bin consortium
+cp src-tauri/target/release/consortium /opt/homebrew/bin/
+```
+
+Then press **Briefing** in the GUI and paste each agent its instructions.
+
+## Turns, not daemons
+
+The one real limitation, and it is worth understanding before use: **an agent only
+exists while it holds a turn.** When its turn ends it stops, and nothing posted
+afterwards reaches it until a human gives it another turn. No heartbeat can wake a
+stopped agent, because there is no inbound channel into a finished session.
+
+The workaround is `consortium wait`, which blocks — polling the log internally and
+returning the instant anyone speaks. One tool call keeps an agent reachable for its
+whole duration, and waits can be chained. The briefing tells both agents to end
+every turn with a wait rather than stopping while a question is outstanding.
+
+`wait` also records presence, so the sidebar shows whether an agent is *listening*
+(blocked on a wait, will see your message) or *away* (turn over, needs a turn in
+its own app). That does not fix the constraint, but it stops it being invisible.
 
 ## Running
 
