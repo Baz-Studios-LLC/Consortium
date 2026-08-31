@@ -22,10 +22,49 @@ pub fn workspace() -> PathBuf {
     PathBuf::from(home).join("Documents").join("Consortium Workspace")
 }
 
-pub fn log_path() -> PathBuf {
-    let dir = workspace().join(".consortium");
+/// Everything belonging to one conversation lives in one directory.
+fn conversation_dir(slug: &str) -> PathBuf {
+    let dir = workspace()
+        .join(".consortium")
+        .join("conversations")
+        .join(slug);
     let _ = fs::create_dir_all(&dir);
-    dir.join("messages.jsonl")
+    dir
+}
+
+/// Moves a room that predates conversations into the first one.
+///
+/// Keyed on the old file still being there, so it happens once and costs an
+/// `exists` check afterwards. Done lazily rather than at startup because the
+/// CLI is a separate process that may well run first, and a migration only
+/// the window performs would split the room in half.
+pub fn migrate() {
+    let old = workspace().join(".consortium").join("messages.jsonl");
+    if !old.exists() {
+        return;
+    }
+
+    let dest = conversation_dir("general").join("messages.jsonl");
+    // Never over an existing room. If both are somehow present, the one that
+    // conversations already know about wins and the old file stays put for a
+    // human to look at.
+    if dest.exists() {
+        return;
+    }
+    match fs::rename(&old, &dest) {
+        Ok(()) => log("migrated the existing room into the 'general' conversation"),
+        Err(e) => log(&format!("could not migrate the existing room: {e}")),
+    }
+}
+
+pub fn log_path_for(slug: &str) -> PathBuf {
+    migrate();
+    conversation_dir(slug).join("messages.jsonl")
+}
+
+/// The room this process is talking in.
+pub fn log_path() -> PathBuf {
+    log_path_for(&crate::conversation::active())
 }
 
 /// Empties the room, keeping what was in it.
@@ -35,13 +74,13 @@ pub fn log_path() -> PathBuf {
 /// that destroys history on a single click is a button people are right to be
 /// afraid of. Archives are numbered rather than timestamped so clearing twice
 /// in a second cannot overwrite the first.
-pub fn archive() -> Result<PathBuf, String> {
-    let path = log_path();
+pub fn archive_for(slug: &str) -> Result<PathBuf, String> {
+    let path = log_path_for(slug);
     if !path.exists() {
         return Err("there is nothing to clear".into());
     }
 
-    let dir = workspace().join(".consortium").join("archive");
+    let dir = conversation_dir(slug).join("archive");
     fs::create_dir_all(&dir).map_err(|e| format!("could not make an archive: {e}"))?;
 
     let mut n = 1;
@@ -102,10 +141,16 @@ pub fn log(message: &str) {
 }
 
 /// Where a given reader got to last time, so `read` only shows what's new.
-pub fn cursor_path(who: &str) -> PathBuf {
-    let dir = workspace().join(".consortium").join("cursors");
+pub fn cursor_path_for(conversation: &str, who: &str) -> PathBuf {
+    // Per conversation: how far someone has read in one room says nothing
+    // about how far they have read in another.
+    let dir = conversation_dir(conversation).join("cursors");
     let _ = fs::create_dir_all(&dir);
     dir.join(format!("{}.cursor", slug(who)))
+}
+
+pub fn cursor_path(who: &str) -> PathBuf {
+    cursor_path_for(&crate::conversation::active(), who)
 }
 
 pub fn slug(s: &str) -> String {
@@ -361,6 +406,11 @@ pub fn presence() -> Vec<(String, String, u64)> {
             Some((who, state, now.saturating_sub(at)))
         })
         .collect()
+}
+
+pub fn read_lines_for(slug: &str) -> Vec<String> {
+    let Ok(f) = File::open(log_path_for(slug)) else { return Vec::new() };
+    BufReader::new(f).lines().map_while(Result::ok).filter(|l| !l.trim().is_empty()).collect()
 }
 
 pub fn read_lines() -> Vec<String> {

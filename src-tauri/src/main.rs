@@ -14,6 +14,7 @@
 mod agent;
 mod bus;
 mod claude_adapter;
+mod conversation;
 mod codex_adapter;
 mod manager;
 mod router;
@@ -292,7 +293,7 @@ fn agent_states(studio: tauri::State<Studio>) -> Vec<AgentStatus> {
 /// — working, to look at, and inert.
 #[tauri::command]
 fn bus_clear(studio: tauri::State<Studio>) -> Result<String, String> {
-    let archived = bus::archive()?;
+    let archived = bus::archive_for(&conversation::active())?;
     if let Some(manager) = studio.agents.lock().unwrap().clone() {
         manager.reset();
     }
