@@ -1,6 +1,6 @@
 [package]
 name = "consortium"
-version = "0.1.2"
+version = "0.1.3"
 description = "An in-house development studio that drives coding-agent CLIs against a shared workspace."
 authors = ["Brett Bazaar"]
 edition = "2021"
