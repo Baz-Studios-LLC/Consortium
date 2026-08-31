@@ -552,8 +552,17 @@ fn main() {
                 let state = app.state::<Studio>();
                 let pending = state.pending_update.lock().unwrap().take();
                 if let Some(p) = pending {
-                    if let Err(e) = p.update.install(&p.bytes) {
-                        bus::log(&format!("could not install update {}: {e}", p.version));
+                    // Both outcomes, not just the bad one. Logging only
+                    // failures meant a successful install left no trace, so
+                    // "did it update?" had to be answered by looking at the
+                    // timestamp on an exe — inferring something the app knew
+                    // for certain and did not say.
+                    bus::log(&format!("update: installing {} on exit", p.version));
+                    match p.update.install(&p.bytes) {
+                        Ok(()) => bus::log(&format!("update: {} installed", p.version)),
+                        Err(e) => {
+                            bus::log(&format!("could not install update {}: {e}", p.version))
+                        }
                     }
                 }
             }
