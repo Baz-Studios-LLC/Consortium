@@ -338,7 +338,7 @@
     <button class="ghost" id="briefBtn">Briefing</button>
     <button class="ghost" id="clearBtn">Clear</button>
     <button class="ghost" id="refreshBtn">Refresh</button>
-    <button class="ghost" id="roomsBtn" title="Rooms">Rooms</button>
+    <button class="ghost icon" id="roomsBtn" title="Rooms" aria-label="Rooms" aria-expanded="false">☰</button>
   </div>
 </header>
 
@@ -570,12 +570,14 @@ async function send() {
 function openRooms() {
   $('roomsDrawer').classList.add('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'false');
+  $('roomsBtn').setAttribute('aria-expanded', 'true');
   $('roomsScrim').classList.add('on');
   loadRooms(); loadSessions();
 }
 function closeRooms() {
   $('roomsDrawer').classList.remove('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'true');
+  $('roomsBtn').setAttribute('aria-expanded', 'false');
   $('roomsScrim').classList.remove('on');
   $('newConv').hidden = true;
 }
@@ -601,7 +603,6 @@ async function loadRooms() {
 
 function renderRooms() {
   const here = rooms.find(r => r.slug === activeRoom);
-  $('roomsBtn').textContent = here ? here.name : 'Rooms';
   $('roomsBtn').title = 'Rooms — currently in ' + (here ? here.name : 'none');
 
   const box = $('conversations');
