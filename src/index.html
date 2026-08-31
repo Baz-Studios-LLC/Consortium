@@ -369,6 +369,9 @@
     font-size: 11px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
     cursor: pointer; white-space: nowrap;
   }
+  /* Mid-download reads as in-progress rather than done: an update that is
+     still arriving has not yet earned the colour of one that is ready. */
+  .pill.working { background: #2b2718; color: #d8c07c; border-color: #4b4227; }
   .pill.show { display: inline-flex; }
   .pill:hover { background: #21402f; }
   .pill[disabled] { opacity: .6; cursor: default; }
@@ -1145,22 +1148,45 @@ let pendingUpdate = null;
 // Fetched in the background and applied when the window closes, so nothing
 // interrupts a conversation and nobody has to click anything. The pill is
 // information, not an action.
+// Nothing here is clickable. The pill is a statement about what will happen,
+// not an action — leaving it live would offer a button that does nothing.
+function showPill(text, kind) {
+  const pill = $('updatePill');
+  pill.textContent = text;
+  pill.classList.add('show');
+  pill.classList.toggle('working', kind === 'working');
+  pill.disabled = true;
+  pill.style.cursor = 'default';
+}
+
 async function checkUpdate() {
+  const pill = $('updatePill');
   try {
-    const version = await invoke('update_download');
-    pendingUpdate = version;
-    const pill = $('updatePill');
-    if (version) {
-      pill.textContent = version + ' ready — starts next time';
-      pill.classList.add('show');
-      // Nothing to click: it is a statement about what will happen, not an
-      // action. Leaving it live would offer a button that does nothing.
-      pill.disabled = true;
-      pill.style.cursor = 'default';
-    } else {
-      pill.classList.remove('show');
+    const available = await invoke('update_check');
+    if (!available) { pill.classList.remove('show'); return; }
+
+    // Already fetched and waiting for the next close; nothing more to do,
+    // and re-downloading it every five minutes would be worse than nothing.
+    if (pendingUpdate === available) {
+      showPill(pendingUpdate + ' ready — starts next time', 'ready');
+      return;
     }
-  } catch (_) { /* offline, or no manifest yet — the next check tries again */ }
+
+    // Said as soon as it is known. Fetching can take a while on a slow
+    // connection, and until it finished the window looked exactly like one
+    // with no update at all.
+    showPill(available + ' available — downloading…', 'working');
+
+    const staged = await invoke('update_download');
+    pendingUpdate = staged;
+    if (staged) showPill(staged + ' ready — starts next time', 'ready');
+    else pill.classList.remove('show');
+  } catch (_) {
+    // Offline, or no manifest yet. Anything already staged is still true, so
+    // keep saying so; otherwise claim nothing and let the next check try.
+    if (pendingUpdate) showPill(pendingUpdate + ' ready — starts next time', 'ready');
+    else pill.classList.remove('show');
+  }
 }
 
 // ---------- wiring ----------
@@ -1246,7 +1272,9 @@ setInterval(loadWorkspace, 15000);
 // on disk announces it. This one genuinely has to be a timer.
 setInterval(pollPresence, 3000);
 checkUpdate();
-setInterval(checkUpdate, 30 * 60 * 1000);
+// Every five minutes, as asked. A check is one small request and costs
+// nothing when there is nothing to report.
+setInterval(checkUpdate, 5 * 60 * 1000);
 </script>
 </body>
 </html>
