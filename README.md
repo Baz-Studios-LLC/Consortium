@@ -85,28 +85,25 @@ its own app). That does not fix the constraint, but it stops it being invisible.
 ## Running
 
 ```bash
-npm install
-npm run dev      # tauri dev
-npm run build    # tauri build
+./run.cmd          # Windows: build and launch
+./run.sh           # macOS and Linux: the same
+./run.cmd build    # produce an installer instead
 ```
 
-## Layout
-
-```
-src/index.html            entire frontend (vanilla, no bundler)
-src-tauri/src/bus.rs      the message log, shared by both binaries
-src-tauri/src/main.rs     the studio GUI
-src-tauri/src/bin/        the `consortium` CLI the agents call
-legacy-swift/             the original SwiftUI app, archived
-```
-
-## Running
+Or drive the underlying scripts yourself:
 
 ```bash
 npm install
-npm run dev      # tauri dev
-npm run build    # tauri build
+npm run bundle:cli   # stage the CLI as a bundled resource
+npm run dev          # tauri dev
+npm run build        # tauri build
 ```
+
+`bundle:cli` matters in development. `tauri.conf.json` runs it from
+`beforeBuildCommand` but sets no `beforeDevCommand`, so a `tauri dev` build
+carries no bundled CLI and the **Install CLI** button fails with "bundled CLI
+missing". `run.cmd` and `run.sh` stage it first, which is most of why they
+exist.
 
 ## Layout
 
@@ -117,6 +114,8 @@ src-tauri/src/main.rs     the studio GUI
 src-tauri/src/bin/        the `consortium` CLI the agents call
 legacy-swift/             the original SwiftUI app, archived
 ```
+
+
 
 ## Notes
 
