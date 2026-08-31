@@ -209,9 +209,30 @@ struct Presence {
     age_secs: u64,
 }
 
+/// A slice of a room's transcript, and how long the whole thing is.
+#[derive(Serialize)]
+struct MessagePage {
+    /// Total messages in the room, so the window can tell what it has not
+    /// asked for yet without being sent it.
+    total: usize,
+    messages: Vec<BusMessage>,
+}
+
+/// Everything said after `from`.
+///
+/// Used to return the whole room every time, which was fine until a room had
+/// eight thousand messages in it: parsing and serialising all of them ran on
+/// every poll and every file change, and froze the window for twenty seconds
+/// at launch. Only new lines are parsed now.
 #[tauri::command]
-fn bus_messages() -> Vec<BusMessage> {
-    bus::read_lines()
+fn bus_messages_since(from: usize) -> MessagePage {
+    let lines = bus::read_lines();
+    let total = lines.len();
+    // Clamped rather than trusted: the window's idea of where it had got to
+    // is stale the moment a room is cleared.
+    let start = from.min(total);
+
+    let messages = lines[start..]
         .iter()
         .filter_map(|l| {
             Some(BusMessage {
@@ -227,7 +248,9 @@ fn bus_messages() -> Vec<BusMessage> {
                 at: bus::field(l, "at").and_then(|a| a.parse().ok()).unwrap_or(0),
             })
         })
-        .collect()
+        .collect();
+
+    MessagePage { total, messages }
 }
 
 #[tauri::command]
@@ -744,7 +767,7 @@ fn main() {
             set_workspace,
             list_workspace_files,
             reveal_workspace,
-            bus_messages,
+            bus_messages_since,
             bus_presence,
             agent_states,
             bus_post,

@@ -230,6 +230,10 @@
      are archived rather than destroyed, so this warns without shouting. */
   button.ghost.armed { border-color: var(--warn, #d08770); color: var(--warn, #d08770); }
   .hint { color: var(--muted); font-size: 10.5px; margin-top: 7px; }
+  .older {
+    color: var(--muted); font-size: 10.5px; text-align: center;
+    padding: 8px 0 12px; border-bottom: 1px solid var(--line); margin-bottom: 10px;
+  }
   /* Quiet by design: worth being able to find, not worth reading every time.
      Monospace so a version number does not reflow as its digits change. */
   .ver {
@@ -360,7 +364,10 @@ const speakerClass = (from) => {
 const clockOf = (at) =>
   at ? new Date(at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) : '';
 
-function renderMessage(m) {
+// Builds without touching the document. Appending here and reading
+// scrollHeight per message forced a layout each time, which is why a room
+// with eight thousand messages took twenty seconds to paint.
+function buildMessage(m) {
   const el = document.createElement('div');
   el.className = 'turn ' + speakerClass(m.from);
   el.innerHTML = '<div class="who"><span class="nm"></span><span class="when"></span></div>' +
@@ -368,8 +375,18 @@ function renderMessage(m) {
   el.querySelector('.nm').textContent = m.from;
   el.querySelector('.when').textContent = clockOf(m.at);
   el.querySelector('.text').textContent = m.text;
-  $('log').appendChild(el);
-  $('log').scrollTop = $('log').scrollHeight;
+  return el;
+}
+
+// How much of a long room to paint on arrival. Enough to read back through,
+// far short of what makes the window unusable.
+const FIRST_PAINT = 300;
+
+function olderMarker(count) {
+  const el = document.createElement('div');
+  el.className = 'older';
+  el.textContent = count + ' earlier messages not shown';
+  return el;
 }
 
 const agoOf = (s) => s < 45 ? 'just now' : s < 5400 ? Math.round(s / 60) + 'm ago'
@@ -424,14 +441,45 @@ invoke('app_version')
 
 
 async function pollBus() {
-  let msgs;
-  try { msgs = await invoke('bus_messages'); } catch (_) { return; }
-  if (msgs.length < shown) { $('log').innerHTML = ''; shown = 0; }   // log was reset
-  for (let i = shown; i < msgs.length; i++) {
-    renderMessage(msgs[i]);
-    seenFrom.add(msgs[i].from);
+  let page;
+  try { page = await invoke('bus_messages_since', { from: shown }); }
+  catch (_) { return; }
+
+  // Shorter than we had already shown means the room was cleared or
+  // switched underneath us; start it over rather than appending to a
+  // transcript that no longer exists.
+  if (page.total < shown) {
+    $('log').innerHTML = ''; shown = 0;
+    try { page = await invoke('bus_messages_since', { from: 0 }); }
+    catch (_) { return; }
   }
-  if (msgs.length !== shown) { shown = msgs.length; renderParticipants(); }
+
+  // First paint of a long room: skip the backlog, and say so rather than
+  // quietly presenting the tail as the whole conversation.
+  let skipped = 0;
+  if (shown === 0 && page.total > FIRST_PAINT) {
+    skipped = page.total - FIRST_PAINT;
+    shown = skipped;
+    try { page = await invoke('bus_messages_since', { from: shown }); }
+    catch (_) { return; }
+  }
+  if (!page.messages.length) return;
+
+  // Staying put if the reader has scrolled up to read something.
+  const log = $('log');
+  const atBottom = log.scrollHeight - log.scrollTop - log.clientHeight < 60;
+
+  const batch = document.createDocumentFragment();
+  if (skipped) batch.appendChild(olderMarker(skipped));
+  for (const m of page.messages) {
+    batch.appendChild(buildMessage(m));
+    seenFrom.add(m.from);
+  }
+  log.appendChild(batch);
+  if (atBottom) log.scrollTop = log.scrollHeight;
+
+  shown = page.total;
+  renderParticipants();
 }
 
 async function send() {
