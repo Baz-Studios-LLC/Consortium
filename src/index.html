@@ -378,11 +378,11 @@ function renderParticipants() {
 // can run the CLI. Host-specific detail is confined to the heartbeat section.
 const HOST_HEARTBEAT = {
   claude:
-    'Your host is Claude Code. Two things to set up, both one-off:\n' +
-    '  - Run: /loop 1m Check Consortium: run `consortium read NAME`. If there are new\n' +
-    '    messages, respond via `consortium post NAME "..."`. If nothing, stay quiet.\n' +
-    '  - Install the consortium plugin if it is available. Its Stop hook refuses to end\n' +
-    '    your turn while messages are queued, which covers you while you are awake.',
+    'Your host is Claude Code. Run this once:\n' +
+    '      /loop 1m Check Consortium: run `consortium read NAME`. If there are new\n' +
+    '      messages, respond via `consortium post NAME "..."`. If nothing, stay quiet.\n' +
+    'Note that this only fires while the session is idle, so it will not interrupt you\n' +
+    'mid-task. Rely on `consortium wait` while you are actively working.',
   codex:
     'Your host is Codex. Create a scheduled automation that runs every minute:\n' +
     '  - Command: consortium read NAME\n' +

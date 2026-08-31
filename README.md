@@ -85,38 +85,42 @@ src/index.html            entire frontend (vanilla, no bundler)
 src-tauri/src/bus.rs      the message log, shared by both binaries
 src-tauri/src/main.rs     the studio GUI
 src-tauri/src/bin/        the `consortium` CLI the agents call
-plugin/                   optional Claude Code plugin (skill + Stop hook)
 legacy-swift/             the original SwiftUI app, archived
 ```
 
-## The plugin (optional)
+## Running
 
-`plugin/` is a Claude Code plugin. It is **not required** — the room works with the
-CLI alone. It adds two conveniences:
+```bash
+npm install
+npm run dev      # tauri dev
+npm run build    # tauri build
+```
 
-- a **skill** that teaches the protocol, so a session does not need the briefing pasted
-- a **Stop hook** that refuses to end a turn while messages are queued, handing them to
-  the running session instead
+## Layout
 
-The hook covers the window a heartbeat cannot: a message that arrives while an agent is
-*already working*. Without it that message waits for the next heartbeat tick; with it the
-turn simply continues. It cannot wake a stopped agent — nothing can.
-
-See `plugin/README.md` to install.
+```
+src/index.html            entire frontend (vanilla, no bundler)
+src-tauri/src/bus.rs      the message log, shared by both binaries
+src-tauri/src/main.rs     the studio GUI
+src-tauri/src/bin/        the `consortium` CLI the agents call
+legacy-swift/             the original SwiftUI app, archived
+```
 
 ## Notes
 
-- **PATH.** A Finder-launched `.app` inherits a minimal PATH, so `/opt/homebrew/bin/claude`
-  is invisible to a naive lookup. `resolve_binary` asks the login shell first, then falls
-  back to the usual install locations.
-- **Permissions.** Claude Code runs with `--permission-mode acceptEdits`; agents work the
-  shared folder unattended and there is no way to answer a permission prompt from this UI.
-- **Codex lives inside ChatGPT.app.** It is not on PATH, so `resolve_binary` falls back to
-  `/Applications/ChatGPT.app/Contents/Resources/codex`. A real PATH install still wins.
-- **The two CLIs speak different dialects.** Claude Code emits `system`/`assistant`/`result`
-  under `--output-format stream-json`; Codex emits `thread.started`/`item.completed`/
-  `turn.completed` under `exec --json`. Both parsers were written against captured output,
-  not documentation. Claude reports cost in dollars, Codex in tokens.
-- **Codex needs `--skip-git-repo-check`.** The shared workspace is not a git repo, and Codex
-  refuses to run outside one without it. It also runs `-s workspace-write` so it can actually
-  write into the shared folder.
+- **Nothing is spawned and nothing is authenticated.** Consortium has no HTTP client
+  and stores no keys. The agents run in their own apps, already signed in; the bus only
+  moves text and files between processes on this machine.
+- **PATH.** A Finder-launched `.app` inherits a minimal PATH, so a CLI under
+  `/opt/homebrew/bin` is invisible to a naive lookup. `resolve_binary` asks the login
+  shell first, then the usual install prefixes. This is only used to tell you whether the
+  agents can reach the `consortium` CLI at all.
+- **`wait` does not see backlog.** It reports messages posted *after* it starts. Read
+  first, then wait — otherwise anything that arrived a moment earlier is skipped.
+- **The JSON is hand-rolled** to keep the CLI dependency-free and instant to shell out
+  to, since agents call it constantly. `field()` is a small flat-object scanner that
+  observes string boundaries and decodes the full escape set including `\uXXXX` and
+  surrogate pairs. Earlier versions mangled control characters on read; see
+  `docs/bus-field-json-parser.patch` and the tests in `bus.rs`.
+- **An agent only exists while it holds a turn.** See *Turns, not daemons* above. This
+  is the central constraint of the whole design, not an implementation detail.
