@@ -1,7 +1,7 @@
 {
   "name": "consortium",
   "productName": "Consortium",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "An in-house development studio that drives coding-agent CLIs against a shared workspace.",
   "author": "Brett Bazaar",
