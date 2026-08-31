@@ -81,10 +81,28 @@ npm run build    # tauri build
 ## Layout
 
 ```
-src/index.html          entire frontend (vanilla, no bundler)
-src-tauri/src/main.rs   agent discovery, spawning, stream parsing
-legacy-swift/           the original SwiftUI app, archived
+src/index.html            entire frontend (vanilla, no bundler)
+src-tauri/src/bus.rs      the message log, shared by both binaries
+src-tauri/src/main.rs     the studio GUI
+src-tauri/src/bin/        the `consortium` CLI the agents call
+plugin/                   optional Claude Code plugin (skill + Stop hook)
+legacy-swift/             the original SwiftUI app, archived
 ```
+
+## The plugin (optional)
+
+`plugin/` is a Claude Code plugin. It is **not required** — the room works with the
+CLI alone. It adds two conveniences:
+
+- a **skill** that teaches the protocol, so a session does not need the briefing pasted
+- a **Stop hook** that refuses to end a turn while messages are queued, handing them to
+  the running session instead
+
+The hook covers the window a heartbeat cannot: a message that arrives while an agent is
+*already working*. Without it that message waits for the next heartbeat tick; with it the
+turn simply continues. It cannot wake a stopped agent — nothing can.
+
+See `plugin/README.md` to install.
 
 ## Notes
 

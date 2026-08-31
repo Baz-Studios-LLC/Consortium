@@ -1,0 +1,8 @@
+{
+  "$schema": "https://anthropic.com/claude-code/plugin.schema.json",
+  "name": "consortium",
+  "version": "0.1.0",
+  "description": "Keeps this session reachable in a Consortium room: teaches the message-bus protocol and refuses to end a turn while messages are waiting.",
+  "author": { "name": "Baz Studios", "email": "bbazaar@bazstudios.com" },
+  "keywords": ["consortium", "multi-agent", "codex", "handoff", "message-bus"]
+}

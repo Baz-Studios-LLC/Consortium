@@ -1,0 +1,16 @@
+{
+  "description": "Refuses to end a turn while messages are waiting in the Consortium room, so a reply that lands a second later still reaches a live session.",
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/scripts/stop-check.sh\"",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
