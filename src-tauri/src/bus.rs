@@ -182,7 +182,44 @@ fn read_hex4(s: &str, start: usize) -> Option<(u16, usize)> {
 
 #[cfg(test)]
 mod tests {
-    use super::{escape, field};
+    use super::{escape, field, mentions};
+
+    #[test]
+    fn a_mention_addresses_someone() {
+        assert_eq!(mentions("@Codex please review smtp.rs"), vec!["codex"]);
+        // Case-insensitive, and mid-sentence is still a mention.
+        assert_eq!(mentions("I think @Claude should look"), vec!["claude"]);
+    }
+
+    #[test]
+    fn an_email_address_is_not_a_mention() {
+        // The whole reason mentions must start a word: this used to be the
+        // difference between a message to nobody and a message to "example".
+        assert!(mentions("write to me@example.com about it").is_empty());
+    }
+
+    #[test]
+    fn a_statement_addresses_nobody() {
+        // Rule six, and the one that stops two agents talking forever: an
+        // agent message with no mention wakes no one.
+        assert!(mentions("The changes are committed.").is_empty());
+    }
+
+    #[test]
+    fn several_mentions_are_kept_in_order_without_duplicates() {
+        assert_eq!(
+            mentions("@Codex and @Claude — @codex you first"),
+            vec!["codex", "claude"]
+        );
+    }
+
+    #[test]
+    fn unknown_names_survive_parsing() {
+        // The parser does not decide who exists. Dropping an unknown name here
+        // would make a typo look exactly like addressing nobody, and the router
+        // could never tell the difference or report it.
+        assert_eq!(mentions("@Gemini take a look"), vec!["gemini"]);
+    }
 
     #[test]
     fn field_round_trips_control_escapes() {
@@ -293,11 +330,56 @@ pub fn ago(secs: u64) -> String {
     }
 }
 
+/// The names a message explicitly addresses, lowercased and in order.
+///
+/// Deliberately dumb: it extracts every `@name` without deciding whether that
+/// name belongs to a live participant. Knowing who exists is the router's job,
+/// and a parser that silently dropped unknown names would make a typo
+/// indistinguishable from a message addressed to nobody.
+///
+/// A mention has to start a word. That is what keeps `mail me@example.com` from
+/// reading as a message addressed to "example".
+pub fn mentions(text: &str) -> Vec<String> {
+    let bytes = text.as_bytes();
+    let mut found: Vec<String> = Vec::new();
+
+    for (i, _) in text.match_indices('@') {
+        let starts_word = i == 0
+            || bytes
+                .get(i - 1)
+                .is_some_and(|b| b.is_ascii_whitespace() || matches!(b, b'(' | b'[' | b'{'));
+        if !starts_word {
+            continue;
+        }
+        let name: String = text[i + 1..]
+            .chars()
+            .take_while(|c| c.is_alphanumeric() || *c == '-' || *c == '_')
+            .collect();
+        if name.is_empty() {
+            continue;
+        }
+        let name = name.to_lowercase();
+        if !found.contains(&name) {
+            found.push(name);
+        }
+    }
+    found
+}
+
 pub fn post(who: &str, text: &str) {
+    // Recipients are stored as a comma-separated string rather than a JSON
+    // array. The reader in this file is hand-rolled and understands strings and
+    // scalars; teaching it arrays to express a list of two short names is more
+    // surface for bugs than the list is worth, and it stays valid JSON either
+    // way. Parsed here, at the one boundary both the CLI and the window pass
+    // through, so nothing downstream re-reads prose to learn who was addressed.
+    let to = mentions(text).join(",");
+
     let line = format!(
-        "{{\"from\":\"{}\",\"text\":\"{}\",\"at\":\"{}\"}}\n",
+        "{{\"from\":\"{}\",\"text\":\"{}\",\"to\":\"{}\",\"at\":\"{}\"}}\n",
         escape(who),
         escape(text),
+        escape(&to),
         now_secs()
     );
     // A failed write must never report success.

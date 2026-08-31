@@ -168,6 +168,10 @@ fn reveal_workspace(studio: State<Studio>) -> Result<(), String> {
 struct BusMessage {
     from: String,
     text: String,
+    /// Who the message explicitly addressed, lowercased. Empty means it
+    /// addressed nobody — which is not the same as addressing everybody, and is
+    /// what keeps two agents from answering each other indefinitely.
+    to: Vec<String>,
     /// Unix seconds; 0 for messages written before timestamps existed.
     at: u64,
 }
@@ -189,6 +193,13 @@ fn bus_messages() -> Vec<BusMessage> {
             Some(BusMessage {
                 from: bus::field(l, "from")?,
                 text: bus::field(l, "text")?,
+                to: bus::field(l, "to")
+                    .unwrap_or_default()
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|n| !n.is_empty())
+                    .map(str::to_string)
+                    .collect(),
                 at: bus::field(l, "at").and_then(|a| a.parse().ok()).unwrap_or(0),
             })
         })
