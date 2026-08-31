@@ -4,10 +4,15 @@ version = "0.1.0"
 description = "An in-house development studio that drives coding-agent CLIs against a shared workspace."
 authors = ["Brett Bazaar"]
 edition = "2021"
+default-run = "consortium-studio"   # `cargo run` / `tauri dev` mean the GUI
 
 [[bin]]
-name = "consortium"
+name = "consortium-studio"   # the Tauri GUI
 path = "src/main.rs"
+
+[[bin]]
+name = "consortium"          # the CLI the agents call
+path = "src/bin/consortium.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

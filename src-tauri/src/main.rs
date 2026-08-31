@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 
+mod bus;
+
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -184,10 +186,7 @@ struct Studio {
 }
 
 fn default_workspace() -> PathBuf {
-    let home = std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE")) // Windows
-        .unwrap_or_else(|_| ".".into());
-    PathBuf::from(home).join("Documents").join("Consortium Workspace")
+    bus::workspace()
 }
 
 // ---------------------------------------------------------------------------
@@ -631,6 +630,45 @@ fn run_agent(app: AppHandle, req: RunRequest, studio: State<Studio>) -> Result<(
 }
 
 // ---------------------------------------------------------------------------
+// The message bus
+//
+// The GUI is just another participant: it reads the same append-only log the
+// agents write to with `consortium post`, and posts the user's own messages
+// into it. Nothing is spawned and nothing is authenticated.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct BusMessage {
+    from: String,
+    text: String,
+}
+
+#[tauri::command]
+fn bus_messages() -> Vec<BusMessage> {
+    bus::read_lines()
+        .iter()
+        .filter_map(|l| {
+            Some(BusMessage {
+                from: bus::field(l, "from")?,
+                text: bus::field(l, "text")?,
+            })
+        })
+        .collect()
+}
+
+#[tauri::command]
+fn bus_post(from: String, text: String) {
+    bus::post(&from, &text);
+}
+
+/// Whether the agents can actually reach the CLI. Without it on PATH they have
+/// no way to talk, so the UI needs to say so plainly.
+#[tauri::command]
+fn cli_installed() -> Option<String> {
+    resolve_binary("consortium").map(|p| p.to_string_lossy().into_owned())
+}
+
+// ---------------------------------------------------------------------------
 // Self-update
 //
 // The UI polls `update_check` on a long interval and shows a pill when a newer
@@ -707,7 +745,10 @@ fn main() {
             run_agent,
             cancel_agent,
             update_check,
-            update_install
+            update_install,
+            bus_messages,
+            bus_post,
+            cli_installed
         ])
         .run(tauri::generate_context!())
         .expect("error while running Consortium");

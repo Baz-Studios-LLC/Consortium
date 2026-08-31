@@ -57,7 +57,7 @@
   }
   .agent {
     display: flex; align-items: center; gap: 9px; margin: 0 8px 6px;
-    padding: 9px 10px; border-radius: 8px; cursor: pointer;
+    padding: 9px 10px; border-radius: 8px;
     border: 1px solid transparent;
   }
   .agent:hover { background: var(--panel-2); }
@@ -81,6 +81,8 @@
     color: var(--muted); flex: none; white-space: nowrap;
   }
   .role.primary { color: var(--accent); border-color: #33507e; background: #17213a; }
+  .role.swap { cursor: pointer; }
+  .role.swap:hover { color: var(--text); border-color: var(--accent); }
 
   /* briefing modal */
   .scrim {
@@ -129,6 +131,18 @@
     font-family: var(--mono); font-size: 11.5px; color: var(--muted);
   }
   .turn.err .body { color: var(--err); border-left-color: var(--err); }
+  .turn.failed .body { border-left-color: var(--err); }
+  .seg-room { white-space: pre-wrap; }
+  .seg-local {
+    white-space: pre-wrap; color: var(--muted); font-size: 12px;
+    border-left: 2px dotted var(--line); padding-left: 9px; margin: 6px 0;
+  }
+  .seg-local::before {
+    content: 'local · not shared'; display: block;
+    font-size: 9px; letter-spacing: .07em; text-transform: uppercase;
+    color: #5d677d; margin-bottom: 3px;
+  }
+  .chips { margin-top: 6px; }
   .tool {
     display: inline-block; font-family: var(--mono); font-size: 10.5px;
     color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
@@ -209,13 +223,12 @@
 
 <footer>
   <div class="row">
-    <textarea id="prompt" placeholder="Describe the task for the selected agent…  (⌘↵ to run)"></textarea>
+    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (⌘↵ to send)"></textarea>
     <button id="runBtn">Send</button>
     <button id="stopBtn" class="stop" style="display:none">Stop</button>
   </div>
   <div class="opts">
-    <span class="opt-label">Send to</span>
-    <div class="seg" id="target"></div>
+    <span class="opt-label" id="cliState">Checking for the consortium CLI…</span>
   </div>
   <div class="hint" id="status">Ready.</div>
 </footer>
@@ -234,299 +247,152 @@
 
 <script>
 const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
-let agents = [];
-let target = null;            // agent id, or 'both'
-let running = null;
-let settle = null;            // resolves when the in-flight run exits
+// Consortium never launches or authenticates an agent. Claude and Codex already
+// run in their own apps and talk through the `consortium` CLI; this window is
+// simply another participant reading and writing the same log.
+const KNOWN = [
+  { id: 'claude', name: 'Claude', dot: 'claude' },
+  { id: 'codex',  name: 'Codex',  dot: 'codex'  }
+];
+const ME = 'You';
 
-// One shared room. Every participant — you included — appends here, and each
-// agent is fed only what it hasn't seen yet.
-let transcript = [];          // {speaker, name, text}
-let sessions = {};            // agent id -> its CLI session id
-let delivered = {};           // agent id -> transcript entries already sent to it
-let briefed = {};             // agent id -> has had the "who else is here" preamble
-// One agent leads, the other supports. Persisted so it survives a relaunch.
+let agents = KNOWN.slice();
 let primary = localStorage.getItem('primary') || 'claude';
-let openEntry = null;         // transcript entry currently being streamed into
+let shown = 0;              // how many log lines are already on screen
+let seenFrom = new Set();
+
+const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
+const speakerClass = (from) => {
+  const hit = KNOWN.find(a => a.name.toLowerCase() === String(from).toLowerCase());
+  return hit ? hit.id : (from === ME ? 'you' : 'sys');
+};
 
 // ---------- transcript ----------
-function render(entry) {
+function renderMessage(m) {
   const el = document.createElement('div');
-  el.className = 'turn ' + entry.speaker;
-  el.innerHTML = '<div class="who"></div><div class="body"></div>';
-  el.querySelector('.who').textContent = entry.name;
-  el.querySelector('.body').textContent = entry.text;
-  $('log').appendChild(el);
-  $('log').scrollTop = $('log').scrollHeight;
-  entry.el = el;
-  return entry;
-}
-
-function addEntry(speaker, name, text) {
-  const entry = { speaker, name, text: text || '' };
-  transcript.push(entry);
-  return render(entry);
-}
-
-function appendText(entry, text) {
-  entry.text += (entry.text ? '\n\n' : '') + text;
-  entry.el.querySelector('.body').textContent = entry.text;
-  $('log').scrollTop = $('log').scrollHeight;
-}
-
-function note(cls, who, text) {   // transient — never enters the transcript
-  const el = document.createElement('div');
-  el.className = 'turn ' + cls;
-  el.innerHTML = '<div class="who"></div><div class="body"></div>';
-  el.querySelector('.who').textContent = who;
-  el.querySelector('.body').textContent = text;
+  el.className = 'turn ' + speakerClass(m.from);
+  el.innerHTML = '<div class="who"></div><div class="body"><div class="text"></div></div>';
+  el.querySelector('.who').textContent = m.from;
+  el.querySelector('.text').textContent = m.text;
   $('log').appendChild(el);
   $('log').scrollTop = $('log').scrollHeight;
 }
 
-// ---------- what each agent still needs to hear ----------
-const nameOf = (id) => (agents.find(a => a.id === id) || {}).name || id;
-
-// The session preamble. Role-aware, and explicit about the fact that the app is
-// the wire — otherwise an agent with shell access may try to invoke the other
-// agent's CLI itself, duplicating the relay.
-function briefingFor(agentId) {
-  const isPrimary = agentId === primary;
-  const peerId = (agents.find(a => a.id !== agentId) || {}).id;
-  const peer = peerId ? nameOf(peerId) : 'another agent';
-
-  const role = isPrimary
-    ? 'You are the primary agent on this work, alongside the user and ' + peer +
-      ', who is assisting you. You own the direction and the final call. Hand ' +
-      peer + ' the pieces where a second pair of eyes or parallel work genuinely ' +
-      'helps, and say plainly when you disagree with it.'
-    : 'You are assisting ' + nameOf(primary) + ', who is the primary agent on this ' +
-      'work, alongside the user. Support their direction and take on what they hand ' +
-      'you. Push back when you think they are wrong — you are a colleague, not a ' +
-      'rubber stamp — but they own the final call.';
-
-  const how =
-    'How to talk to them: just write. Consortium relays messages between all of ' +
-    'you, so your reply is delivered automatically and theirs come back to you as ' +
-    'messages labelled with their name. There is no command to run and nothing to ' +
-    'connect — do NOT try to launch ' + peer + " or invoke its CLI yourself, and do " +
-    'not shell out to another agent. Address people by name when you want ' +
-    'something specific from them.';
-
-  const files =
-    'You all share one working directory. A message is the right size for ' +
-    'discussion; for anything larger — code, drafts, data, images — write it to a ' +
-    'file in that directory and say which file you wrote, and the others can read ' +
-    'it directly.';
-
-  return role + '\n\n' + how + '\n\n' + files;
-}
-
-function buildPrompt(agentId) {
-  const pending = transcript
-    .slice(delivered[agentId] || 0)
-    .filter(e => e.speaker !== agentId);   // it already said its own lines
-  delivered[agentId] = transcript.length;
-
-  if (!pending.length) return null;
-
-  const lines = pending.map(e => e.name + ': ' + e.text).join('\n\n');
-  if (briefed[agentId]) return lines;
-
-  briefed[agentId] = true;
-  return briefingFor(agentId) + '\n\n' + lines;
-}
-
-// ---------- running ----------
-function runAgent(agentId) {
-  const prompt = buildPrompt(agentId);
-  if (!prompt) return Promise.resolve();
-
-  running = agentId;
-  openEntry = null;
-  $('spin-' + agentId).textContent = '●';
-  $('status').textContent = (agents.find(a => a.id === agentId) || {}).name + ' thinking…';
-  updateControls();
-
-  return new Promise((resolve) => {
-    settle = resolve;
-    invoke('run_agent', {
-      req: { agent: agentId, prompt, sessionId: sessions[agentId] || null }
-    }).catch((e) => {
-      note('err', 'Error', String(e));
-      endRun();
-    });
-  });
-}
-
-function endRun() {
-  if (running) $('spin-' + running).textContent = '';
-  running = null;
-  openEntry = null;
-  updateControls();
-  loadWorkspace();
-  const done = settle; settle = null;
-  if (done) done();
+async function pollBus() {
+  let msgs;
+  try { msgs = await invoke('bus_messages'); } catch (_) { return; }
+  if (msgs.length < shown) { $('log').innerHTML = ''; shown = 0; }   // log was reset
+  for (let i = shown; i < msgs.length; i++) {
+    renderMessage(msgs[i]);
+    seenFrom.add(msgs[i].from);
+  }
+  if (msgs.length !== shown) { shown = msgs.length; renderParticipants(); }
 }
 
 async function send() {
-  if (running) return;
   const text = $('prompt').value.trim();
-  if (text) addEntry('you', 'You', text);
+  if (!text) return;
   $('prompt').value = '';
-
-  const installed = agents.filter(a => a.installed).map(a => a.id);
-  // Primary speaks first so the assistant can react to its lead.
-  const order = target === 'both'
-    ? installed.slice().sort((a, b) => (a === primary ? -1 : b === primary ? 1 : 0))
-    : [target];
-
-  // Sequential on purpose: the second agent should see the first one's reply.
-  for (const id of order) {
-    if (!installed.includes(id)) continue;
-    await runAgent(id);
-  }
-  $('status').textContent = 'Ready.';
+  try { await invoke('bus_post', { from: ME, text }); }
+  catch (e) { console.error(e); }
+  pollBus();
 }
 
-listen('agent-event', ({ payload: e }) => {
-  const name = (agents.find(a => a.id === e.agent) || {}).name || e.agent;
-  if (e.session_id) sessions[e.agent] = e.session_id;
-
-  switch (e.kind) {
-    case 'text':
-      if (openEntry) appendText(openEntry, e.text);
-      else openEntry = addEntry(e.agent, name, e.text);
-      break;
-    case 'tool': {
-      if (!openEntry) openEntry = addEntry(e.agent, name, '');
-      const chip = document.createElement('span');
-      chip.className = 'tool';
-      chip.textContent = e.text;
-      openEntry.el.querySelector('.body').appendChild(chip);
-      break;
-    }
-    case 'result': {
-      const detail = e.detail ? ' · ' + e.detail : '';
-      if (e.is_error) note('err', name, e.text || 'failed');
-      else if (openEntry) {
-        const bar = document.createElement('div');
-        bar.className = 'result-bar';
-        bar.textContent = 'done' + detail;
-        openEntry.el.appendChild(bar);
-      }
-      break;
-    }
-    case 'stderr':
-      note('err', name + ' (stderr)', e.text);
-      break;
-    case 'exit':
-      endRun();
-      break;
-  }
-});
-
-// ---------- agents ----------
-async function loadAgents() {
-  agents = await invoke('detect_agents');
+// ---------- participants ----------
+function renderParticipants() {
   const box = $('agents');
   box.innerHTML = '';
-  for (const a of agents) {
-    const el = document.createElement('div');
-    el.className = 'agent' + (a.installed ? '' : ' off');
+  for (const a of KNOWN) {
     const isPrimary = a.id === primary;
+    const active = seenFrom.has(a.name);
+    const el = document.createElement('div');
+    el.className = 'agent' + (active ? '' : ' off');
     el.innerHTML =
-      '<span class="dot ' + (a.installed ? a.id : 'off') + '"></span>' +
+      '<span class="dot ' + (active ? a.dot : 'off') + '"></span>' +
       '<span class="meta"><div class="nm"></div><div class="vr"></div></span>' +
-      '<span class="role' + (isPrimary ? ' primary' : '') + '"></span>' +
-      '<span class="spin" id="spin-' + a.id + '"></span>';
+      '<span class="role' + (isPrimary ? ' primary' : '') + '"></span>';
     el.querySelector('.nm').textContent = a.name;
-    el.querySelector('.vr').textContent = a.installed ? (a.version || 'installed') : 'not installed';
-    el.querySelector('.role').textContent = isPrimary ? 'primary' : 'alt';
-    el.title = a.installed
-      ? a.path + (isPrimary ? '' : ' — click to make primary')
-      : a.install_hint;
-    if (a.installed && !isPrimary) {
-      el.onclick = () => {
+    el.querySelector('.vr').textContent = active ? 'in the room' : 'not joined yet';
+    const badge = el.querySelector('.role');
+    badge.textContent = isPrimary ? 'primary' : 'alt';
+    if (!isPrimary) {
+      badge.classList.add('swap');
+      badge.title = 'Make ' + a.name + ' the primary';
+      badge.onclick = () => {
         primary = a.id;
         localStorage.setItem('primary', primary);
-        // Roles only take effect at the start of a session, so start fresh ones.
-        briefed = {};
-        loadAgents();
+        renderParticipants();
       };
     }
     box.appendChild(el);
   }
-  buildTargets();
 }
 
-function buildTargets() {
-  const installed = agents.filter(a => a.installed);
-  if (!target || (target !== 'both' && !installed.some(a => a.id === target))) {
-    target = installed.length ? installed[0].id : null;
-  }
-  const box = $('target');
-  box.innerHTML = '';
-  const opts = installed.map(a => ({ id: a.id, label: a.name }));
-  if (installed.length >= 2) opts.push({ id: 'both', label: 'Both' });
-  for (const o of opts) {
-    const b = document.createElement('button');
-    b.textContent = o.label;
-    b.className = target === o.id ? 'on' : '';
-    b.onclick = () => { target = o.id; buildTargets(); };
-    box.appendChild(b);
-  }
-  updateControls();
+// ---------- briefing ----------
+function briefingFor(agentId) {
+  const me = nameOf(agentId);
+  const peer = nameOf(KNOWN.find(a => a.id !== agentId).id);
+  const isPrimary = agentId === primary;
+
+  const role = isPrimary
+    ? 'You are the primary here: you own the direction and the final call. Hand ' +
+      peer + ' the pieces where a second pair of eyes or parallel work genuinely ' +
+      'helps, and say plainly when you disagree with them.'
+    : 'You are assisting ' + nameOf(primary) + ', who owns the direction and the ' +
+      'final call. Take on what they hand you, and push back when you think they ' +
+      'are wrong — you are a colleague, not a rubber stamp.';
+
+  return [
+    'You are ' + me + ', working with ' + peer + ' and the user in a shared session called Consortium.',
+    '',
+    'You each run in your own app. You reach each other through a local command ' +
+    'line tool called `consortium`. It contacts no network and needs no login — it ' +
+    'only moves messages and files between you on this machine.',
+    '',
+    'Your name in the room is: ' + me,
+    '',
+    'Say something to the room:',
+    '    consortium post ' + me + ' "your message"',
+    '',
+    'Read anything you have not seen yet:',
+    '    consortium read ' + me,
+    '',
+    'Block until someone replies (up to 120 seconds):',
+    '    consortium wait ' + me + ' --secs 120',
+    '',
+    'Share a file, list what is shared, or find the shared folder:',
+    '    consortium share /path/to/file',
+    '    consortium ls',
+    '    consortium who',
+    '',
+    'How to use it well:',
+    '- You decide what is worth saying. Your reasoning, tool calls and exploration ' +
+    'stay in your own session; nobody sees them. Only `post` when you actually have ' +
+    'something for the others — a question, a decision, a disagreement, a handoff, ' +
+    'or a result worth knowing.',
+    '- After posting something that needs an answer, run `consortium wait ' + me +
+    '` so you actually receive the reply instead of moving on.',
+    '- Run `consortium read ' + me + '` whenever you want to check for new messages.',
+    '- A message is the right size for discussion. For anything bigger — code, ' +
+    'drafts, data, images — `consortium share` the file and say in your message ' +
+    'which file you wrote.',
+    '- Address people by name so it is obvious who you are asking.',
+    '',
+    role
+  ].join('\n');
 }
 
-function updateControls() {
-  $('runBtn').disabled = !target || !!running;
-  $('runBtn').style.display = running ? 'none' : '';
-  $('stopBtn').style.display = running ? '' : 'none';
-}
-
-// ---------- workspace ----------
-async function loadWorkspace() {
-  $('wsPath').textContent = await invoke('get_workspace');
-  const files = await invoke('list_workspace_files');
-  const box = $('files');
-  box.innerHTML = '';
-  if (!files.length) {
-    box.innerHTML = '<div class="empty">Empty — files agents create land here.</div>';
-    return;
-  }
-  for (const f of files) {
-    const el = document.createElement('div');
-    el.className = 'file';
-    el.innerHTML = '<span></span><span class="sz"></span>';
-    el.children[0].textContent = (f.is_dir ? '▸ ' : '  ') + f.name;
-    el.children[1].textContent = f.is_dir ? '' : fmtSize(f.size);
-    box.appendChild(el);
-  }
-}
-
-const fmtSize = (n) =>
-  n < 1024 ? n + ' B' :
-  n < 1048576 ? (n / 1024).toFixed(1) + ' KB' :
-  (n / 1048576).toFixed(1) + ' MB';
-
-// ---------- wiring ----------
-$('runBtn').onclick = send;
-$('stopBtn').onclick = async () => {
-  if (running) { await invoke('cancel_agent', { agent: running }); endRun(); }
-};
 function openBriefing() {
   const box = $('briefBody');
   box.innerHTML = '';
-  for (const a of agents.filter(x => x.installed)) {
+  for (const a of KNOWN) {
     const block = document.createElement('div');
     block.className = 'brief-block';
     block.innerHTML =
       '<div class="brief-head">' +
-        '<span class="dot ' + a.id + '"></span>' +
+        '<span class="dot ' + a.dot + '"></span>' +
         '<span class="nm"></span>' +
         '<span class="role' + (a.id === primary ? ' primary' : '') + '"></span>' +
         '<button class="ghost copy" style="margin-left:auto">Copy</button>' +
@@ -546,14 +412,38 @@ function openBriefing() {
   $('scrim').classList.add('open');
 }
 
-$('briefBtn').onclick = openBriefing;
-$('briefClose').onclick = () => $('scrim').classList.remove('open');
-$('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
-$('revealBtn').onclick = () => invoke('reveal_workspace');
-$('refreshBtn').onclick = () => { loadAgents(); loadWorkspace(); };
-$('prompt').addEventListener('keydown', (e) => {
-  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
-});
+// ---------- workspace ----------
+const fmtSize = (n) =>
+  n < 1024 ? n + ' B' :
+  n < 1048576 ? (n / 1024).toFixed(1) + ' KB' :
+  (n / 1048576).toFixed(1) + ' MB';
+
+async function loadWorkspace() {
+  $('wsPath').textContent = await invoke('get_workspace');
+  const files = await invoke('list_workspace_files');
+  const box = $('files');
+  box.innerHTML = '';
+  if (!files.length) {
+    box.innerHTML = '<div class="empty">Empty — shared files land here.</div>';
+    return;
+  }
+  for (const f of files) {
+    const el = document.createElement('div');
+    el.className = 'file';
+    el.innerHTML = '<span></span><span class="sz"></span>';
+    el.children[0].textContent = (f.is_dir ? '▸ ' : '  ') + f.name;
+    el.children[1].textContent = f.is_dir ? '' : fmtSize(f.size);
+    box.appendChild(el);
+  }
+}
+
+async function checkCli() {
+  const path = await invoke('cli_installed');
+  $('cliState').textContent = path
+    ? 'consortium CLI ready at ' + path
+    : 'consortium CLI not on PATH — the agents cannot talk until it is installed';
+  $('cliState').style.color = path ? '' : 'var(--err)';
+}
 
 // ---------- self-update ----------
 let pendingUpdate = null;
@@ -563,15 +453,9 @@ async function checkUpdate() {
     const version = await invoke('update_check');
     pendingUpdate = version;
     const pill = $('updatePill');
-    if (version) {
-      pill.textContent = 'Update to ' + version;
-      pill.classList.add('show');
-    } else {
-      pill.classList.remove('show');
-    }
-  } catch (_) {
-    // Offline or the manifest isn't reachable — stay quiet and try again later.
-  }
+    if (version) { pill.textContent = 'Update to ' + version; pill.classList.add('show'); }
+    else pill.classList.remove('show');
+  } catch (_) { /* offline or no manifest yet — try again later */ }
 }
 
 $('updatePill').onclick = async () => {
@@ -579,22 +463,29 @@ $('updatePill').onclick = async () => {
   const pill = $('updatePill');
   pill.disabled = true;
   pill.textContent = 'Updating…';
-  try {
-    // Restarts into the new build on success, so nothing after this runs.
-    await invoke('update_install');
-  } catch (e) {
-    pill.disabled = false;
-    pill.textContent = 'Update failed — retry';
-    note('err', 'Update', String(e));
-  }
+  try { await invoke('update_install'); }          // restarts on success
+  catch (e) { pill.disabled = false; pill.textContent = 'Update failed — retry'; }
 };
 
-loadAgents();
-loadWorkspace();
-setInterval(loadWorkspace, 4000);        // agents write files behind our back
+// ---------- wiring ----------
+$('runBtn').onclick = send;
+$('briefBtn').onclick = openBriefing;
+$('briefClose').onclick = () => $('scrim').classList.remove('open');
+$('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
+$('revealBtn').onclick = () => invoke('reveal_workspace');
+$('refreshBtn').onclick = () => { loadWorkspace(); pollBus(); checkCli(); };
+$('prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+});
 
+renderParticipants();
+checkCli();
+loadWorkspace();
+pollBus();
+setInterval(pollBus, 1500);              // the agents post whenever they like
+setInterval(loadWorkspace, 4000);
 checkUpdate();
-setInterval(checkUpdate, 30 * 60 * 1000); // light polling — twice an hour is plenty
+setInterval(checkUpdate, 30 * 60 * 1000);
 </script>
 </body>
 </html>
