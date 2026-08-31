@@ -22,6 +22,7 @@ tauri = { version = "2", features = ["devtools"] } # devtools: surface a real er
 serde = { version = "1", features = ["derive"] }
 serde_json = "1" # agent CLIs speak stream-json; every line off stdout is parsed here
 tauri-plugin-updater = "2" # the studio keeps itself up to date
+notify = "8.2.0"
 
 # No HTTP client on purpose — Consortium never talks to a model provider itself.
 # The agent CLIs own their own auth, transport, and billing; we only drive them.

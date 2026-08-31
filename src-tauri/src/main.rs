@@ -18,7 +18,8 @@ use std::process::Command;
 use std::sync::Mutex;
 
 use serde::Serialize;
-use tauri::{AppHandle, Manager, State};
+use notify::RecommendedWatcher;
+use tauri::{AppHandle, Emitter, Manager, State};
 
 // ---------------------------------------------------------------------------
 // Binary discovery
@@ -83,6 +84,9 @@ fn resolve_binary(binary: &str) -> Option<PathBuf> {
 
 struct Studio {
     workspace: Mutex<PathBuf>,
+    /// Kept alive deliberately: a dropped watcher stops watching, so one that
+    /// is not held somewhere quietly does nothing at all.
+    watcher: Mutex<Option<RecommendedWatcher>>,
 }
 
 // ---------------------------------------------------------------------------
@@ -95,10 +99,21 @@ fn get_workspace(studio: State<Studio>) -> String {
 }
 
 #[tauri::command]
-fn set_workspace(path: String, studio: State<Studio>) -> Result<String, String> {
+fn set_workspace(
+    path: String,
+    app: AppHandle,
+    studio: State<Studio>,
+) -> Result<String, String> {
     let p = PathBuf::from(&path);
     std::fs::create_dir_all(&p).map_err(|e| e.to_string())?;
     *studio.workspace.lock().unwrap() = p.clone();
+
+    // Re-point the watcher, or the room would keep listening to the directory
+    // it was moved away from and go quiet without appearing to.
+    match watch_workspace(app, p.clone()) {
+        Ok(w) => *studio.watcher.lock().unwrap() = Some(w),
+        Err(e) => eprintln!("could not watch {}: {e}", p.display()),
+    }
     Ok(p.to_string_lossy().into_owned())
 }
 
@@ -350,6 +365,42 @@ async fn update_install(app: AppHandle) -> Result<(), String> {
     app.restart();
 }
 
+// ---------------------------------------------------------------------------
+// Change notification
+//
+// The window used to poll the log three times a second to find out whether
+// anyone had spoken. Polling is how you pay for latency twice: an agent's reply
+// sits unread for up to a second and a half, and the app burns a wakeup every
+// interval to discover that nothing happened.
+//
+// The workspace is a directory on this machine, so the OS will simply tell us
+// when it changes. The watcher covers the whole workspace, which means the
+// shared-file list gets the same treatment for free.
+// ---------------------------------------------------------------------------
+
+/// Emitted whenever anything in the workspace changes. The window reloads on it
+/// rather than on a timer.
+const WORKSPACE_CHANGED: &str = "workspace-changed";
+
+fn watch_workspace(app: AppHandle, dir: PathBuf) -> notify::Result<RecommendedWatcher> {
+    use notify::{EventKind, RecursiveMode, Watcher};
+
+    let handle = app.clone();
+    let mut watcher = notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+        let Ok(event) = res else { return };
+        // Access alone is not a change. Without this filter, merely reading the
+        // log would announce that the log had changed.
+        if matches!(event.kind, EventKind::Access(_)) {
+            return;
+        }
+        let _ = handle.emit(WORKSPACE_CHANGED, ());
+    })?;
+
+    // The log lives in a subdirectory, so this has to be recursive to see it.
+    watcher.watch(&dir, RecursiveMode::Recursive)?;
+    Ok(watcher)
+}
+
 fn main() {
     let workspace = bus::workspace();
     let _ = std::fs::create_dir_all(&workspace);
@@ -357,7 +408,22 @@ fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Studio {
-            workspace: Mutex::new(workspace),
+            workspace: Mutex::new(workspace.clone()),
+            // Held for the life of the app: dropping a watcher stops it, so a
+            // watcher that is not kept somewhere silently watches nothing.
+            watcher: Mutex::new(None),
+        })
+        .setup(move |app| {
+            match watch_workspace(app.handle().clone(), workspace.clone()) {
+                Ok(w) => {
+                    *app.state::<Studio>().watcher.lock().unwrap() = Some(w);
+                }
+                // Not fatal. The window keeps a slow poll as a safety net, so a
+                // platform without working notifications is slower rather than
+                // broken — but it should say so rather than pretending.
+                Err(e) => eprintln!("workspace watcher unavailable, falling back to polling: {e}"),
+            }
+            Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_workspace,

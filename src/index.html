@@ -262,6 +262,7 @@
 
 <script>
 const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
 const $ = (id) => document.getElementById(id);
 
 // Consortium never launches or authenticates an agent. Claude and Codex already
@@ -653,9 +654,29 @@ checkCli();
 loadWorkspace();
 pollBus();
 pollPresence();
-setInterval(pollBus, 1500);              // the agents post whenever they like
+// The OS tells us when the workspace changes, so the room updates the moment
+// anyone speaks rather than up to a second and a half later.
+//
+// Several writes arrive as several events — a single post can produce more than
+// one — so this coalesces them into one refresh per burst.
+let refreshQueued = null;
+listen('workspace-changed', () => {
+  if (refreshQueued) return;
+  refreshQueued = setTimeout(() => {
+    refreshQueued = null;
+    pollBus();
+    loadWorkspace();
+  }, 60);
+});
+
+// A slow safety net, not the mechanism. If the watcher could not start — an
+// unusual filesystem, a platform without notifications — the room still
+// updates, just at the speed it used to.
+setInterval(pollBus, 15000);
+setInterval(loadWorkspace, 15000);
+// Presence is a timestamp going stale rather than a file changing, so nothing
+// on disk announces it. This one genuinely has to be a timer.
 setInterval(pollPresence, 3000);
-setInterval(loadWorkspace, 4000);
 checkUpdate();
 setInterval(checkUpdate, 30 * 60 * 1000);
 </script>
