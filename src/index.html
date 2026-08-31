@@ -875,9 +875,12 @@ function renderParticipants() {
         : m.state === 'working' ? a.name + ' is mid-turn. Anything you send queues behind it.'
         : m.state === 'idle'    ? 'Consortium will wake ' + a.name + ' when a message is for it.'
                                 : a.name + ' is ' + m.state + '.')
+      // Not run by Consortium: these describe an agent someone is driving by
+      // hand, which is the only case where reaching it is still its own
+      // problem.
       : live
-      ? a.name + ' is blocked on `consortium wait` and will pick up your next message.'
-      : a.name + ' has finished its turn. Give it a turn in its own app to bring it back.';
+      ? a.name + ' is waiting on the room in its own app and will see your next message.'
+      : a.name + ' is not being run by Consortium, and its turn has ended. Give it a turn in its own app.';
     const badge = el.querySelector('.role');
     badge.textContent = isPrimary ? 'primary' : 'alt';
     if (!isPrimary) {
@@ -894,9 +897,14 @@ function renderParticipants() {
 }
 
 // ---------- briefing ----------
-// The briefing. Written to be pasted into ANY agent's session, not just the two
-// we know about — the room does not care what is on the other end, only that it
-// can run the CLI. Host-specific detail is confined to the heartbeat section.
+// Written to be pasted into ANY agent's session, not just the two we know
+// about — the room does not care what is on the other end, only that it can run
+// the CLI.
+//
+// Its job changed when Consortium learned to wake agents itself. An agent
+// Consortium runs needs none of this: the adapter hands it the message and the
+// room around it. This is for an agent you are driving by hand, which is the
+// only case left where staying reachable is the agent's own problem.
 const HOST_HEARTBEAT = {
   claude:
     'Your host is Claude Code. Run this once:\n' +
@@ -952,10 +960,12 @@ function briefingFor(name, opts) {
     'COMMANDS',
     '    consortium post  ' + name + ' "your message"      say something to the room',
     '    consortium read  ' + name + '                      read what you have not seen',
-    '    consortium wait  ' + name + ' --secs ' + waitSecs + '            block until someone speaks',
+    '    consortium wait  ' + name + ' --secs ' + waitSecs + '            block until someone speaks*',
     '    consortium share /path/to/file        put a file in the shared folder',
     '    consortium ls                         list the shared folder',
     '    consortium who                        print the shared folder path',
+    '',
+    '* only needed if Consortium is not running you — see STAYING REACHABLE.',
     '',
     'If `post` prints "posted", it posted. It exits non-zero and prints the reason',
     'when a write fails, so you never have to re-send on a suspicion — and re-sending',
@@ -972,10 +982,19 @@ function briefingFor(name, opts) {
     'each @ the other are how a room ends up talking to itself with nobody in it.',
     'Acknowledge without the @, or say nothing — silence is a valid contribution.',
     '',
-    'STAYING REACHABLE — read this part twice',
-    'You only exist while you hold a turn. The moment your turn ends you stop, and',
-    'anything posted afterwards cannot reach you. Nothing can wake you from outside.',
-    'Two habits fix this, and you need both:',
+    'STAYING REACHABLE',
+    'This depends entirely on who is running you, and the two cases could not be',
+    'more different.',
+    '',
+    'IF CONSORTIUM IS RUNNING YOU, there is nothing to set up. It watches the room',
+    'and starts you when a message is for you, handing you that message and the',
+    'conversation around it. End your turn whenever you are done; you will be back',
+    'when you are needed. Do not poll, and do not schedule anything — a heartbeat',
+    'here is a model invocation to discover, almost always, that nothing happened.',
+    '',
+    'IF YOU ARE BEING DRIVEN BY HAND in your own app, Consortium cannot reach you.',
+    'You exist only while you hold a turn: the moment it ends you stop, and anything',
+    'posted afterwards cannot reach you. Two habits fix that, and you need both:',
     '',
     '1. Do not end a turn while you are still expecting something. End it by blocking',
     '   on the room instead:',

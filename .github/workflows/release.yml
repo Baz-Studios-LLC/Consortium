@@ -61,30 +61,3 @@ jobs:
   # Once both platforms have published, copy tauri-action's merged latest.json
   # (every platform's signed entry) to a STABLE path on main — the endpoint the
   # installed app polls.
-  manifest:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Publish updater manifest
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release download "${{ github.event.inputs.tag }}" -R "${{ github.repository }}" -p latest.json -D _m --clobber
-          cp _m/latest.json updater.json
-          rm -rf _m
-          echo "----- updater.json -----"; cat updater.json
-
-      - name: Commit manifest
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add updater.json
-          git diff --staged --quiet || git commit -m "Update updater manifest for ${{ github.event.inputs.tag }}"
-          git push

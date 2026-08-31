@@ -10,8 +10,6 @@
 
 /// A message as the router sees it.
 pub struct Envelope<'a> {
-    /// Position in the log. Message identity everywhere in Consortium.
-    pub index: usize,
     pub from: &'a str,
     /// Lowercased names the message addressed, as `post` recorded them.
     pub to: &'a [String],
@@ -128,7 +126,7 @@ mod tests {
     }
 
     fn msg<'a>(from: &'a str, to: &'a [String]) -> Envelope<'a> {
-        Envelope { index: 0, from, to }
+        Envelope { from, to }
     }
 
     fn names(list: &[&str]) -> Vec<String> {

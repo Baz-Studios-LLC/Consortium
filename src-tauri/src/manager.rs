@@ -182,7 +182,6 @@ impl AgentManager {
             // human speaking anywhere in the chain resets the budget.
             let hops = router::hops_since_human(&senders[..index], &self.names);
             let envelope = Envelope {
-                index,
                 from: &from,
                 to: &to,
             };
