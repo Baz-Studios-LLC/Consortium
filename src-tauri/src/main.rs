@@ -15,6 +15,7 @@ mod agent;
 mod bus;
 mod claude_adapter;
 mod codex_adapter;
+mod jobs;
 mod manager;
 mod room;
 mod router;

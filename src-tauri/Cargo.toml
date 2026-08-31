@@ -28,6 +28,11 @@ uuid = { version = "1", features = ["v5"] } # derived session ids: same room, sa
 # No HTTP client on purpose — Consortium never talks to a model provider itself.
 # The agent CLIs own their own auth, transport, and billing; we only drive them.
 
+# Job objects, so an agent process cannot outlive Consortium even if it is
+# killed rather than closed. Windows only; macOS keeps the clean-close path.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_JobObjects", "Win32_Security", "Win32_System_Threading"] }
+
 [profile.release]
 strip = true
 lto = true

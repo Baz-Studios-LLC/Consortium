@@ -112,9 +112,21 @@ impl ClaudeAdapter {
             .env("CONSORTIUM_HOME", &request.workspace);
 
 
-        let output = cmd
-            .output()
+        // Spawned rather than run to completion in one call, so the process
+        // can be adopted before it is waited on. A turn is usually seconds,
+        // but a slow one outliving a crash is the same leak as any other.
+        let child = cmd
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| format!("could not run claude: {e}"))?;
+        if let Err(e) = crate::jobs::adopt(&child) {
+            bus::log(&format!("claude: {e}"));
+        }
+
+        let output = child
+            .wait_with_output()
+            .map_err(|e| format!("claude did not finish: {e}"))?;
 
         // The CLI reports a missing session on stdout and exits cleanly, so
         // neither the exit code nor stderr alone is enough to tell what

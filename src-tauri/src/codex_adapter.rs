@@ -147,6 +147,13 @@ impl Inner {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|e| format!("could not start {}: {e}", binary.display()))?;
+
+        // Tied to Consortium's lifetime straight away. This is the process
+        // that would otherwise survive a crash and keep a session open with
+        // nothing attached to it.
+        if let Err(e) = crate::jobs::adopt(&child) {
+            crate::bus::log(&format!("codex: {e}"));
+        }
         let stdin = child
             .stdin
             .take()
