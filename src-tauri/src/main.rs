@@ -689,6 +689,131 @@ fn cli_installed() -> Option<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Thread discovery
+//
+// Waking an agent is useless without knowing WHICH of its conversations is the
+// one sitting in this room. Both hosts leave that on disk — Codex embeds the
+// thread id in its rollout filename, Claude Code names the transcript after the
+// session id — so we can enumerate candidates and let the user point at the
+// right one instead of relying on the agent to self-register.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize)]
+struct ThreadInfo {
+    kind: String,     // "codex-thread" | "claude-session"
+    id: String,
+    label: String,    // first thing the human said, so the row is recognisable
+    age_secs: u64,
+    project: String,
+}
+
+/// First user utterance in a transcript, trimmed to something that fits a row.
+fn transcript_label(path: &Path) -> String {
+    let Ok(f) = std::fs::File::open(path) else { return String::new() };
+    for line in BufReader::new(f).lines().map_while(Result::ok).take(400) {
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+        // Claude Code: {"type":"user","message":{"content":[{"type":"text","text":...}]}}
+        // Codex:       {"type":"response_item","payload":{"content":[{"text":...}]}}
+        let text = v.pointer("/message/content/0/text")
+            .or_else(|| v.pointer("/payload/content/0/text"))
+            .or_else(|| v.pointer("/message/content"))
+            .and_then(|t| t.as_str());
+        if let Some(t) = text {
+            let t = t.trim();
+            // Skip the machinery: system preambles and our own wake payloads.
+            if t.is_empty() || t.starts_with('<') || t.len() < 4 { continue; }
+            let mut out: String = t.chars().take(70).collect();
+            if t.chars().count() > 70 { out.push('…'); }
+            return out.replace('\n', " ");
+        }
+    }
+    String::new()
+}
+
+fn age_of(path: &Path) -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let now = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| now.saturating_sub(d.as_secs()))
+        .unwrap_or(u64::MAX)
+}
+
+fn walk_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: usize) {
+    if depth > 5 { return; }
+    let Ok(entries) = std::fs::read_dir(dir) else { return };
+    for e in entries.flatten() {
+        let p = e.path();
+        if p.is_dir() { walk_jsonl(&p, out, depth + 1); }
+        else if p.extension().map(|x| x == "jsonl").unwrap_or(false) { out.push(p); }
+    }
+}
+
+#[tauri::command]
+fn list_threads() -> Vec<ThreadInfo> {
+    let home = std::env::var("HOME").unwrap_or_default();
+    let mut all = Vec::new();
+
+    // Codex: rollout-<timestamp>-<thread-id>.jsonl
+    let mut codex = Vec::new();
+    walk_jsonl(&PathBuf::from(&home).join(".codex/sessions"), &mut codex, 0);
+    for p in codex {
+        let name = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        // The id is the last five dash-separated UUID groups.
+        let parts: Vec<&str> = name.split('-').collect();
+        if parts.len() < 5 { continue; }
+        let id = parts[parts.len() - 5..].join("-");
+        all.push(ThreadInfo {
+            kind: "codex-thread".into(),
+            label: transcript_label(&p),
+            age_secs: age_of(&p),
+            id,
+            project: "Codex".into(),
+        });
+    }
+
+    // Claude Code: <project-slug>/<session-id>.jsonl
+    let mut claude = Vec::new();
+    walk_jsonl(&PathBuf::from(&home).join(".claude/projects"), &mut claude, 0);
+    for p in claude {
+        let id = p.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+        let project = p.parent()
+            .and_then(|d| d.file_name())
+            .map(|s| s.to_string_lossy().trim_start_matches('-').replace('-', "/"))
+            .unwrap_or_default();
+        let project = project.rsplit('/').next().unwrap_or("").to_string();
+        all.push(ThreadInfo {
+            kind: "claude-session".into(),
+            label: transcript_label(&p),
+            age_secs: age_of(&p),
+            id,
+            project,
+        });
+    }
+
+    all.sort_by_key(|t| t.age_secs);
+    all.truncate(40);
+    all
+}
+
+#[tauri::command]
+fn register_thread(who: String, kind: String, id: String) {
+    bus::register(&who, &kind, &id);
+}
+
+#[derive(Serialize)]
+struct Registered { who: String, kind: String, id: String, age_secs: u64 }
+
+#[tauri::command]
+fn thread_registry() -> Vec<Registered> {
+    bus::registry().into_iter()
+        .map(|(who, kind, id, age_secs)| Registered { who, kind, id, age_secs })
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
 // Self-update
 //
 // The UI polls `update_check` on a long interval and shows a pill when a newer
@@ -768,6 +893,9 @@ fn main() {
             update_install,
             bus_messages,
             bus_presence,
+            list_threads,
+            register_thread,
+            thread_registry,
             bus_post,
             cli_installed
         ])

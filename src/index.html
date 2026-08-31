@@ -149,6 +149,17 @@
     color: #5d677d; margin-bottom: 3px;
   }
   .chips { margin-top: 6px; }
+  .bind {
+    font-size: 10px; color: var(--muted); margin: 2px 8px 8px;
+    padding: 0 10px; display: flex; align-items: center; gap: 6px;
+  }
+  .bind select {
+    flex: 1 1 auto; min-width: 0; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px;
+    font: inherit; font-size: 10.5px; outline: none;
+  }
+  .bind select:focus { border-color: var(--accent); }
+  .bound { color: var(--ok); }
   .tool {
     display: inline-block; font-family: var(--mono); font-size: 10.5px;
     color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
@@ -269,6 +280,8 @@ let primary = localStorage.getItem('primary') || 'claude';
 let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
 let presence = {};          // name -> {state, age_secs}
+let threads = [];           // discovered conversations on both hosts
+let registry = {};          // name -> the thread the user bound them to
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -361,7 +374,47 @@ function renderParticipants() {
       };
     }
     box.appendChild(el);
+
+    // Which of this agent's conversations is the one in this room? Only the
+    // user can say, so offer the choice rather than guessing at "most recent".
+    const bind = document.createElement('div');
+    bind.className = 'bind';
+    const kind = a.id === 'codex' ? 'codex-thread' : 'claude-session';
+    const sel = document.createElement('select');
+    const mine = threads.filter(t => t.kind === kind);
+    const bound = registry[a.name];
+    sel.innerHTML = '<option value="">— not bound to a thread —</option>' +
+      mine.map(t => {
+        const lbl = (t.label || '(no opening message)').replace(/</g, '&lt;');
+        const sel2 = bound && bound.id === t.id ? ' selected' : '';
+        return `<option value="${t.id}"${sel2}>${agoOf(t.age_secs)} · ${lbl}</option>`;
+      }).join('');
+    sel.onchange = async () => {
+      if (!sel.value) return;
+      await invoke('register_thread', { who: a.name, kind, id: sel.value });
+      loadRegistry();
+    };
+    const tag = document.createElement('span');
+    tag.textContent = bound ? 'bound' : 'thread';
+    if (bound) tag.className = 'bound';
+    bind.appendChild(tag);
+    bind.appendChild(sel);
+    box.appendChild(bind);
   }
+}
+
+async function loadThreads() {
+  try { threads = await invoke('list_threads'); } catch (_) { threads = []; }
+  renderParticipants();
+}
+
+async function loadRegistry() {
+  try {
+    const rows = await invoke('thread_registry');
+    registry = {};
+    for (const r of rows) registry[r.who] = r;
+  } catch (_) { registry = {}; }
+  renderParticipants();
 }
 
 // ---------- briefing ----------
@@ -527,12 +580,17 @@ $('briefBtn').onclick = openBriefing;
 $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
-$('refreshBtn').onclick = () => { loadWorkspace(); pollBus(); pollPresence(); checkCli(); };
+$('refreshBtn').onclick = () => {
+  loadWorkspace(); pollBus(); pollPresence(); loadThreads(); loadRegistry(); checkCli();
+};
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
 });
 
 renderParticipants();
+loadThreads();
+loadRegistry();
+setInterval(loadThreads, 15000);   // new conversations appear as they are used
 checkCli();
 loadWorkspace();
 pollBus();
