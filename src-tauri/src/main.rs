@@ -13,6 +13,10 @@
 
 mod agent;
 mod bus;
+mod claude_adapter;
+mod codex_adapter;
+mod manager;
+mod router;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -90,6 +94,9 @@ struct Studio {
     watcher: Mutex<Option<RecommendedWatcher>>,
     /// An update that has been fetched and is waiting for the app to close.
     pending_update: Mutex<Option<PendingUpdate>>,
+    /// Wakes agents when the room changes. None if no agent could be started,
+    /// in which case the room still works — it just has nobody to wake.
+    agents: Mutex<Option<std::sync::Arc<manager::AgentManager>>>,
 }
 
 /// A downloaded update, held until the app exits.
@@ -512,6 +519,7 @@ fn main() {
             // watcher that is not kept somewhere silently watches nothing.
             watcher: Mutex::new(None),
             pending_update: Mutex::new(None),
+            agents: Mutex::new(None),
         })
         .setup(move |app| {
             match watch_workspace(app.handle().clone(), workspace.clone()) {
