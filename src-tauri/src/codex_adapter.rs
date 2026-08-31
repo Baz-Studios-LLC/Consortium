@@ -499,6 +499,8 @@ mod tests {
     fn request() -> WakeRequest {
         WakeRequest {
             agent: "codex".into(),
+            conversation: "general".into(),
+            session: "00000000-0000-0000-0000-000000000000".into(),
             message_index: 12,
             sender: "Claude".into(),
             body: "@Codex inspect the adapter".into(),

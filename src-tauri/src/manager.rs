@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::agent::{AgentAdapter, AgentState, ContextLine, WakeRequest};
 use crate::bus;
+use crate::conversation;
 use crate::router::{self, Decision, Envelope};
 
 /// How much of the room a woken agent is given.
@@ -32,13 +33,15 @@ pub struct AgentManager {
     /// rather than starting a concurrent turn against the same working tree.
     queues: HashMap<String, Sender<WakeRequest>>,
     names: Vec<String>,
-    /// Message index and recipient pairs already enqueued. A message that
-    /// reaches this twice — two watcher events for one write, a rescan after a
-    /// reload — must not wake anyone a second time.
-    seen: Arc<Mutex<HashSet<(usize, String)>>>,
-    /// Highest log index considered. Persisted, so a restart resumes rather
-    /// than treating everything written before it as new.
-    high_water: Arc<Mutex<usize>>,
+    /// Conversation, message index and recipient already enqueued. A message
+    /// that reaches this twice — two watcher events for one write, a rescan
+    /// after a reload — must not wake anyone a second time. Keyed by room as
+    /// well as index, because message 3 of one room is not message 3 of
+    /// another.
+    seen: Arc<Mutex<HashSet<(String, usize, String)>>>,
+    /// How far each room has been read. Per conversation, so a busy room
+    /// never advances a quiet one past messages nobody has answered.
+    high_water: Arc<Mutex<HashMap<String, usize>>>,
     /// Held so status can be *asked* rather than assumed. Each adapter is
     /// also owned by its worker thread; the state lives behind the adapter's
     /// own lock, so both see the same answer.
@@ -78,7 +81,7 @@ impl AgentManager {
 
                     match adapter.wake(&request) {
                         Ok(Some(reply)) if !reply.trim().is_empty() => {
-                            bus::post(adapter.name(), reply.trim());
+                            bus::post_to(&request.conversation, adapter.name(), reply.trim());
                         }
                         Ok(_) => {
                             // Nothing to say is a real answer. Posting "ok"
@@ -100,7 +103,8 @@ impl AgentManager {
                                 .unwrap()
                                 .insert(format!("{}: {e}", request.agent));
                             if first {
-                                bus::post(
+                                bus::post_to(
+                                    &request.conversation,
                                     router::SYSTEM,
                                     &format!("{} could not answer: {e}", request.agent),
                                 );
@@ -113,17 +117,24 @@ impl AgentManager {
             queues.insert(name, tx);
         }
 
-        let start_at = bus::read_lines().len();
+        // Every existing room starts at its own end. A room that answered its
+        // whole backlog the moment Consortium gained the ability to would be a
+        // disaster in its first second, and it would do it once per room.
+        let mut marks = HashMap::new();
+        for room in conversation::list() {
+            marks.insert(room.slug.clone(), bus::read_lines_for(&room.slug).len());
+        }
         bus::log(&format!(
-            "manager: watching {} agent(s), starting at message {start_at}",
-            names.len()
+            "manager: watching {} agent(s) across {} conversation(s)",
+            names.len(),
+            marks.len()
         ));
 
         Self {
             queues,
             names,
             seen: Arc::new(Mutex::new(HashSet::new())),
-            high_water: Arc::new(Mutex::new(start_at)),
+            high_water: Arc::new(Mutex::new(marks)),
             adapters: held,
         }
     }
@@ -134,9 +145,18 @@ impl AgentManager {
     /// Driven by the filesystem watcher, so this runs when the log actually
     /// changes rather than on a timer.
     pub fn poll(&self) {
-        let lines = bus::read_lines();
-        let mut high = self.high_water.lock().unwrap();
-        if lines.len() <= *high {
+        for room in conversation::list() {
+            self.poll_room(&room.slug);
+        }
+    }
+
+    fn poll_room(&self, slug: &str) {
+        let lines = bus::read_lines_for(slug);
+        let mut marks = self.high_water.lock().unwrap();
+        // A room first seen while running is new, so nothing in it is
+        // backlog. Rooms that existed at startup were marked there.
+        let high = *marks.entry(slug.to_string()).or_insert(0);
+        if lines.len() <= high {
             return;
         }
 
@@ -145,7 +165,7 @@ impl AgentManager {
             .map(|l| bus::field(l, "from").unwrap_or_default())
             .collect();
 
-        for index in *high..lines.len() {
+        for index in high..lines.len() {
             let line = &lines[index];
             let Some(from) = bus::field(line, "from") else {
                 continue;
@@ -170,7 +190,7 @@ impl AgentManager {
             match router::route(&envelope, &self.names, hops) {
                 Decision::Wake(targets) => {
                     for target in targets {
-                        self.enqueue(&target, index, &from, line, &lines);
+                        self.enqueue(slug, &target, index, hops, &from, line, &lines);
                     }
                 }
                 Decision::Nobody => {}
@@ -181,7 +201,8 @@ impl AgentManager {
                     // Announced rather than swallowed. Stopping quietly is
                     // indistinguishable from being broken, and the person who
                     // can restart the conversation needs to know it stopped.
-                    bus::post(
+                    bus::post_to(
+                        slug,
                         router::SYSTEM,
                         &format!(
                             "Automatic agent replies paused after {count} exchanges without anyone else speaking. \
@@ -192,18 +213,21 @@ impl AgentManager {
             }
         }
 
-        *high = lines.len();
+        marks.insert(slug.to_string(), lines.len());
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn enqueue(
         &self,
+        slug: &str,
         agent: &str,
         index: usize,
+        hops: u32,
         sender: &str,
         line: &str,
         lines: &[String],
     ) {
-        let key = (index, agent.to_string());
+        let key = (slug.to_string(), index, agent.to_string());
         if !self.seen.lock().unwrap().insert(key) {
             return; // Already enqueued for this agent.
         }
@@ -242,12 +266,18 @@ impl AgentManager {
 
         let request = WakeRequest {
             agent: agent.to_string(),
+            conversation: slug.to_string(),
+            // Chosen here rather than by the agent: this is what makes the
+            // Claude in this room the same one as yesterday.
+            session: conversation::session_for(slug, agent),
             message_index: index,
             sender: sender.to_string(),
             body: bus::field(line, "text").unwrap_or_default(),
             context,
-            hops: 0,
-            workspace: bus::workspace().to_string_lossy().into_owned(),
+            // Passed through rather than zeroed. An agent that cannot see how
+            // deep the exchange has run cannot mention it when it declines.
+            hops,
+            workspace: conversation::dir_for(slug).to_string_lossy().into_owned(),
         };
 
         if queue.send(request).is_err() {
@@ -264,10 +294,12 @@ impl AgentManager {
     /// future wake — the room would look alive and answer nothing. And `seen`
     /// is keyed by index, so the new message 0 would be mistaken for the old
     /// one and suppressed.
-    pub fn reset(&self) {
-        *self.high_water.lock().unwrap() = 0;
-        self.seen.lock().unwrap().clear();
-        bus::log("manager: room cleared, watching from the top");
+    pub fn reset(&self, slug: &str) {
+        self.high_water.lock().unwrap().insert(slug.to_string(), 0);
+        // Only this room's memory of what it has seen. Clearing one room must
+        // not make another replay.
+        self.seen.lock().unwrap().retain(|(room, _, _)| room != slug);
+        bus::log(&format!("manager: {slug} cleared, watching from the top"));
     }
 
     /// What each agent is actually doing, asked of the adapters.

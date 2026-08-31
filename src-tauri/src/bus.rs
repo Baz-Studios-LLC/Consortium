@@ -22,6 +22,11 @@ pub fn workspace() -> PathBuf {
     PathBuf::from(home).join("Documents").join("Consortium Workspace")
 }
 
+/// Posts into the room this process is talking in.
+pub fn post(who: &str, text: &str) {
+    post_to(&crate::conversation::active(), who, text)
+}
+
 /// Everything belonging to one conversation lives in one directory.
 fn conversation_dir(slug: &str) -> PathBuf {
     let dir = workspace()
@@ -489,7 +494,7 @@ pub fn mentions(text: &str) -> Vec<String> {
     found
 }
 
-pub fn post(who: &str, text: &str) {
+pub fn post_to(conversation: &str, who: &str, text: &str) {
     // Recipients are stored as a comma-separated string rather than a JSON
     // array. The reader in this file is hand-rolled and understands strings and
     // scalars; teaching it arrays to express a list of two short names is more
@@ -513,7 +518,7 @@ pub fn post(who: &str, text: &str) {
     // believed it had gone quiet. That cost an hour of two agents waiting on
     // each other. A tool that lies about whether it did the thing is worse than
     // one that cannot do it, because the second kind you can work around.
-    let path = log_path();
+    let path = log_path_for(conversation);
     let written = OpenOptions::new()
         .create(true)
         .append(true)

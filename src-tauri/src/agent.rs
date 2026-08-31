@@ -64,6 +64,15 @@ impl fmt::Display for AgentState {
 pub struct WakeRequest {
     /// Who is being woken, lowercased — "claude", "codex".
     pub agent: String,
+    /// Which room this happened in. An agent's memory, working directory and
+    /// transcript all hang off this.
+    pub conversation: String,
+    /// The session this agent should continue for this conversation.
+    ///
+    /// Chosen by Consortium rather than by the agent, which is what makes an
+    /// agent the same colleague here tomorrow. Adapters whose tool has no
+    /// notion of a session are free to ignore it.
+    pub session: String,
     /// Index of the triggering message in the log. The log is append-only and
     /// cursors already identify messages this way, so the two agree by
     /// construction rather than by a second scheme that could drift.
@@ -78,7 +87,12 @@ pub struct WakeRequest {
     /// Carried so an adapter can say so if it declines, and so the manager's
     /// limit is visible rather than mysterious.
     pub hops: u32,
-    /// The shared folder, so an agent can find files without being told.
+    /// Where to work: the conversation's directory.
+    ///
+    /// Also where the session lives. Claude Code scopes sessions by working
+    /// directory, so resuming from somewhere else finds nothing — verified,
+    /// not assumed. A conversation must therefore always run in the same
+    /// place, and moving one costs it its memory.
     pub workspace: String,
 }
 

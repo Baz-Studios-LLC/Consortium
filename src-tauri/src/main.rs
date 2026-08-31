@@ -18,6 +18,7 @@ mod conversation;
 mod codex_adapter;
 mod manager;
 mod router;
+mod sessions;
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -293,11 +294,89 @@ fn agent_states(studio: tauri::State<Studio>) -> Vec<AgentStatus> {
 /// — working, to look at, and inert.
 #[tauri::command]
 fn bus_clear(studio: tauri::State<Studio>) -> Result<String, String> {
-    let archived = bus::archive_for(&conversation::active())?;
+    let room = conversation::active();
+    let archived = bus::archive_for(&room)?;
     if let Some(manager) = studio.agents.lock().unwrap().clone() {
-        manager.reset();
+        manager.reset(&room);
     }
     Ok(archived.display().to_string())
+}
+
+/// The rooms, and which one the window is showing.
+#[tauri::command]
+fn conversations() -> Vec<conversation::Conversation> {
+    conversation::list()
+}
+
+#[tauri::command]
+fn conversation_active() -> String {
+    conversation::active()
+}
+
+#[tauri::command]
+fn conversation_select(slug: String) -> Result<(), String> {
+    conversation::set_active(&slug)
+}
+
+/// Adds a room, optionally tied to a project folder.
+///
+/// The folder is where agents woken here will work, and where their sessions
+/// live. Left empty it is the Consortium workspace, which is right for a room
+/// that is not about a particular repository.
+#[tauri::command]
+fn conversation_create(name: String, dir: Option<String>) -> Result<conversation::Conversation, String> {
+    let dir = dir
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty())
+        .map(std::path::PathBuf::from);
+
+    // Refused here rather than accepted and quietly ignored later: a room
+    // pointed at a folder that does not exist would fall back to the shared
+    // workspace, and every agent woken in it would be in the wrong place with
+    // nothing to say why.
+    if let Some(d) = &dir {
+        if !d.is_dir() {
+            return Err(format!("{} is not a folder on this machine", d.display()));
+        }
+    }
+    conversation::create(&name, dir)
+}
+
+/// Claude Code sessions on this machine, for choosing one to continue.
+#[tauri::command]
+fn claude_sessions() -> Vec<sessions::SessionInfo> {
+    sessions::list()
+}
+
+/// Points a room's agent at a session that already exists.
+///
+/// The directory is checked because sessions are scoped to one: attaching a
+/// session held somewhere else produces a room that looks configured and
+/// fails on its first wake with 'No conversation found'. Better to refuse now
+/// and say why.
+#[tauri::command]
+fn conversation_attach(
+    slug: String,
+    agent: String,
+    session: String,
+    session_dir: String,
+) -> Result<(), String> {
+    let room_dir = conversation::dir_for(&slug);
+    let same = std::fs::canonicalize(&room_dir)
+        .ok()
+        .zip(std::fs::canonicalize(&session_dir).ok())
+        .map(|(a, b)| a == b)
+        .unwrap_or(false);
+
+    if !same {
+        return Err(format!(
+            "That session was held in {session_dir}, and this room works in {}. \
+             Claude Code can only resume a session from the folder it was held in, \
+             so point the room at that folder first.",
+            room_dir.display()
+        ));
+    }
+    conversation::attach_session(&slug, &agent, &session)
 }
 
 #[tauri::command]
@@ -667,6 +746,12 @@ fn main() {
             agent_states,
             bus_post,
             bus_clear,
+            conversations,
+            conversation_active,
+            conversation_select,
+            conversation_create,
+            conversation_attach,
+            claude_sessions,
             app_version,
             cli_installed,
             install_cli,
