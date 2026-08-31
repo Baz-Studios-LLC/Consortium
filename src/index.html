@@ -88,11 +88,9 @@
      from the two things that are read constantly, the agent list and the
      transcript. Over the top rather than beside: pushing the transcript
      sideways would reflow every message to open a menu. */
-  .drawer-scrim {
-    position: absolute; inset: 0; background: rgba(0,0,0,.45);
-    opacity: 0; pointer-events: none; transition: opacity 160ms ease; z-index: 40;
-  }
-  .drawer-scrim.on { opacity: 1; pointer-events: auto; }
+  /* No backdrop: the drawer sits alongside the room rather than in front of
+     it, so the transcript stays readable and clickable while it is open. Its
+     border and shadow are enough to separate the two. */
   /* Everything structural comes from .panel; this is only where it sits. */
   .drawer {
     position: absolute; top: 0; right: 0; bottom: 0;
@@ -106,7 +104,7 @@
   .drawer.on { transform: none; }
   .drawer .sec-title { margin-top: 0; }
   @media (prefers-reduced-motion: reduce) {
-    .drawer, .drawer-scrim { transition: none; }
+    .drawer { transition: none; }
   }
 
   /* ---- main ---- */
@@ -275,18 +273,20 @@
   }
 
   /* ---- composer ---- */
-  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 11px 16px; }
-  .row { display: flex; gap: 9px; align-items: stretch; }
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 8px 16px; }
+  .row { display: flex; gap: 8px; align-items: stretch; }
+  /* A textarea is two rows tall by default and was being given room for a
+     paragraph nobody was writing. One line, growing as needed. */
   textarea {
-    flex: 1; resize: none; min-height: 44px; max-height: 190px;
+    flex: 1; resize: none; min-height: 34px; max-height: 190px;
     background: var(--panel-2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px;
+    border: 1px solid var(--line); border-radius: 9px; padding: 7px 12px;
     font: inherit; outline: none;
   }
   textarea:focus { border-color: var(--accent); }
   button {
     background: var(--accent); color: #0b1020; border: 0; font: inherit;
-    font-weight: 640; padding: 0 22px; border-radius: 9px; cursor: pointer;
+    font-weight: 640; padding: 0 20px; border-radius: 9px; cursor: pointer;
   }
   button.ghost {
     background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
@@ -417,8 +417,7 @@
     </div>
   </aside>
   <div id="log"></div>
-  <div class="drawer-scrim" id="roomsScrim"></div>
-  <div class="panel drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
+    <div class="panel drawer" id="roomsDrawer" role="dialog" aria-label="Rooms" aria-hidden="true">
     <div class="panel-head">
       <span>Rooms</span>
       <button class="ghost icon" id="roomsClose" title="Close" aria-label="Close">✕</button>
@@ -453,7 +452,7 @@
 
 <footer>
   <div class="row">
-    <textarea id="prompt" placeholder="Message the room…  everyone here sees it  (Enter sends · Shift+Enter for a new line)"></textarea>
+    <textarea id="prompt" rows="1" placeholder="Message the room…  everyone here sees it  (Enter sends · Shift+Enter for a new line)"></textarea>
     <button id="sendBtn">Send</button>
   </div>
   <div class="opts">
@@ -647,21 +646,18 @@ function openRooms() {
   $('roomsDrawer').classList.add('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'false');
   $('roomsBtn').setAttribute('aria-expanded', 'true');
-  $('roomsScrim').classList.add('on');
   loadRooms(); loadThreads();
 }
 function closeRooms() {
   $('roomsDrawer').classList.remove('on');
   $('roomsDrawer').setAttribute('aria-hidden', 'true');
   $('roomsBtn').setAttribute('aria-expanded', 'false');
-  $('roomsScrim').classList.remove('on');
   $('newConv').hidden = true;
 }
 const roomsOpen = () => $('roomsDrawer').classList.contains('on');
 
 $('roomsBtn').onclick = () => (roomsOpen() ? closeRooms() : openRooms());
 $('roomsClose').onclick = closeRooms;
-$('roomsScrim').onclick = closeRooms;
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && roomsOpen()) closeRooms();
 });
