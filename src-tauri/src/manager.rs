@@ -276,6 +276,27 @@ impl AgentManager {
         bus::log("manager: starting from the current end of the chat");
     }
 
+    /// Shuts every agent down.
+    ///
+    /// Called when the window closes. An adapter that owns a process must be
+    /// told, because on Windows a child does not die with its parent: without
+    /// this, closing Consortium left an agent's process running with nothing
+    /// attached to it, and every launch started another.
+    ///
+    /// Each is tried regardless of what the last one did — one adapter
+    /// refusing to stop is no reason to leave the others running.
+    pub fn stop_all(&self) {
+        for adapter in &self.adapters {
+            match adapter.stop() {
+                Ok(()) => bus::log(&format!("agent: {} stopped", adapter.name())),
+                Err(e) => bus::log(&format!(
+                    "agent: {} did not stop cleanly: {e}",
+                    adapter.name()
+                )),
+            }
+        }
+    }
+
     /// What each agent is actually doing, asked of the adapters.
     ///
     /// This used to return Idle for everyone, which meant a crashed agent looked

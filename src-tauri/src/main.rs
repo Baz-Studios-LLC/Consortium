@@ -724,6 +724,16 @@ fn main() {
             // before rather than automatic.
             if matches!(event, tauri::RunEvent::Exit) {
                 let state = app.state::<Studio>();
+
+                // Before anything else, and before the update: an agent
+                // process that outlives the window is invisible, holds a
+                // model session open, and is joined by another one every
+                // time Consortium starts.
+                let manager = state.agents.lock().unwrap().clone();
+                if let Some(manager) = manager {
+                    manager.stop_all();
+                }
+
                 let pending = state.pending_update.lock().unwrap().take();
                 if let Some(p) = pending {
                     // Both outcomes, not just the bad one. Logging only
