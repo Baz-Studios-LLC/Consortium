@@ -126,7 +126,7 @@ fn set_workspace(
     // it was moved away from and go quiet without appearing to.
     match watch_workspace(app, p.clone()) {
         Ok(w) => *studio.watcher.lock().unwrap() = Some(w),
-        Err(e) => eprintln!("could not watch {}: {e}", p.display()),
+        Err(e) => bus::log(&format!("could not watch {}: {e}", p.display())),
     }
     Ok(p.to_string_lossy().into_owned())
 }
@@ -403,16 +403,49 @@ async fn update_download(
         return Ok(Some(pending.version.clone()));
     }
 
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
+    // Every outcome is recorded. The window discards this error — a failed
+    // check should not interrupt a conversation — which means without a log,
+    // "no update appeared" covers up to date, offline, and a malformed
+    // manifest, three situations that look identical and need different fixes.
+    let updater = app.updater().map_err(|e| {
+        let e = e.to_string();
+        bus::log(&format!("update: updater unavailable: {e}"));
+        e
+    })?;
+
+    let checked = updater.check().await.map_err(|e| {
+        let e = e.to_string();
+        bus::log(&format!("update: check failed: {e}"));
+        e
+    })?;
+
+    let Some(update) = checked else {
+        bus::log(&format!(
+            "update: none available (running {})",
+            env!("CARGO_PKG_VERSION")
+        ));
         return Ok(None);
     };
 
     let version = update.version.clone();
+    bus::log(&format!(
+        "update: {version} available, downloading (running {})",
+        env!("CARGO_PKG_VERSION")
+    ));
+
     let bytes = update
         .download(|_, _| {}, || {})
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| {
+            let e = e.to_string();
+            bus::log(&format!("update: download of {version} failed: {e}"));
+            e
+        })?;
+
+    bus::log(&format!(
+        "update: {version} downloaded ({} bytes), will install on exit",
+        bytes.len()
+    ));
 
     *studio.pending_update.lock().unwrap() = Some(PendingUpdate {
         version: version.clone(),
@@ -462,6 +495,14 @@ fn main() {
     let workspace = bus::workspace();
     let _ = std::fs::create_dir_all(&workspace);
 
+    // Every run starts with what it is and where, so a log entry can be tied to
+    // a version without guessing.
+    bus::log(&format!(
+        "--- Consortium {} starting, workspace {} ---",
+        env!("CARGO_PKG_VERSION"),
+        workspace.display()
+    ));
+
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(Studio {
@@ -479,7 +520,9 @@ fn main() {
                 // Not fatal. The window keeps a slow poll as a safety net, so a
                 // platform without working notifications is slower rather than
                 // broken — but it should say so rather than pretending.
-                Err(e) => eprintln!("workspace watcher unavailable, falling back to polling: {e}"),
+                Err(e) => bus::log(&format!(
+                    "workspace watcher unavailable, falling back to polling: {e}"
+                )),
             }
             Ok(())
         })
@@ -509,7 +552,7 @@ fn main() {
                 let pending = state.pending_update.lock().unwrap().take();
                 if let Some(p) = pending {
                     if let Err(e) = p.update.install(&p.bytes) {
-                        eprintln!("could not install update {}: {e}", p.version);
+                        bus::log(&format!("could not install update {}: {e}", p.version));
                     }
                 }
             }

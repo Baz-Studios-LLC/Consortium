@@ -28,6 +28,49 @@ pub fn log_path() -> PathBuf {
     dir.join("messages.jsonl")
 }
 
+/// Where diagnostics go so a human can read them.
+///
+/// Beside the log the room already uses, in the directory the app already owns
+/// and already reveals — so "what happened?" needs no rebuild and no new place
+/// to look.
+pub fn diag_path() -> PathBuf {
+    let dir = workspace().join(".consortium");
+    let _ = fs::create_dir_all(&dir);
+    dir.join("consortium.log")
+}
+
+/// Keeps the diagnostic log from growing without bound.
+///
+/// One rotation, not a scheme: the previous file is kept so a failure is not
+/// erased the moment it is followed by chatter, and everything older than that
+/// is gone. A log that eats a disk is its own kind of bug.
+const DIAG_MAX_BYTES: u64 = 512 * 1024;
+
+/// Records a diagnostic where it can actually be read.
+///
+/// `eprintln!` alone is invisible in a release build — `windows_subsystem =
+/// "windows"` means no console is attached, so every failure this app knew
+/// about went nowhere. Both destinations are used: stderr is what you see under
+/// `run.cmd`, and the file is what exists in the app people actually install.
+///
+/// Timestamps are unix seconds. Nothing here parses dates, and a hand-rolled
+/// calendar is a strange thing to risk for a log line; ordering and deltas are
+/// what a log is read for.
+pub fn log(message: &str) {
+    eprintln!("{message}");
+
+    let path = diag_path();
+    if fs::metadata(&path).map(|m| m.len()).unwrap_or(0) > DIAG_MAX_BYTES {
+        let _ = fs::rename(&path, path.with_extension("log.old"));
+    }
+
+    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
+        // A failure to write the log is deliberately silent. There is nowhere
+        // left to report it, and an app that cannot log should still work.
+        let _ = writeln!(f, "{} {}", now_secs(), message);
+    }
+}
+
 /// Where a given reader got to last time, so `read` only shows what's new.
 pub fn cursor_path(who: &str) -> PathBuf {
     let dir = workspace().join(".consortium").join("cursors");
@@ -398,9 +441,12 @@ pub fn post(who: &str, text: &str) {
         .and_then(|mut f| f.write_all(line.as_bytes()));
 
     if let Err(e) = written {
-        eprintln!("could not post: {e}");
-        eprintln!("  writing to: {}", path.display());
-        eprintln!("  nothing was written — the room has not seen this message");
+        log(&format!(
+            "could not post: {e}
+  writing to: {}
+  nothing was written — the room has not seen this message",
+            path.display()
+        ));
         std::process::exit(1);
     }
 
@@ -471,7 +517,7 @@ pub fn share(path: &str) {
     match fs::copy(&src, &dst) {
         Ok(_) => println!("shared: {}", dst.display()),
         Err(e) => {
-            eprintln!("could not share {}: {}", path, e);
+            log(&format!("could not share {}: {}", path, e));
             std::process::exit(1);
         }
     }
