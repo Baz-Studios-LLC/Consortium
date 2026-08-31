@@ -14,7 +14,12 @@
     --muted: #8b94a7;
     --accent: #6ea8fe;
     --claude: #d97757;
-    --codex: #10a37f;
+    --codex: #6ea8fe;
+    /* Named rather than borrowed. Your own messages used --accent, which is
+       also the focus ring and the primary button, so the two could not be
+       changed independently — and changing a speaker's colour should not
+       move a button. */
+    --you: #10a37f;
     --err: #f2777a;
     --ok: #7ec699;
     --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -243,7 +248,7 @@
     white-space: pre-wrap; word-break: break-word;
     border-left: 2px solid var(--line); padding-left: 12px;
   }
-  .turn.you .body { border-left-color: var(--accent); }
+  .turn.you .body { border-left-color: var(--you); }
   .turn.claude .body { border-left-color: var(--claude); }
   .turn.codex .body { border-left-color: var(--codex); }
   .turn.sys .body, .turn.err .body {
