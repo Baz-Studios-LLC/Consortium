@@ -11,14 +11,12 @@
 //   consortium wait   <who> [--secs N]  block until someone speaks
 //   consortium share  <path>            copy a file into the shared folder
 //   consortium ls                       list the shared folder
-//   consortium join   <who> <kind> <id> register how your host can reach you
-//   consortium roster                   show who is reachable and how
 //   consortium who                      show the workspace path
 
 #[path = "../bus.rs"]
 mod bus;
 
-use bus::{ls, post, read, register, registry, share, wait, workspace};
+use bus::{ls, post, read, share, wait, workspace};
 
 const USAGE: &str = "\
 consortium — a local message bus between coding agents
@@ -28,9 +26,6 @@ consortium — a local message bus between coding agents
   consortium wait  <who> [--secs N]   block until someone speaks (default 120)
   consortium share <path>             copy a file into the shared folder
   consortium ls                       list the shared folder
-  consortium join <who> <kind> <id>   register how your host can reach you again
-                                      (kind: codex-thread | claude-session)
-  consortium roster                   show who is reachable and how
   consortium who                      print the shared workspace path
 
 <who> is your own name, e.g. \"Claude\" or \"Codex\".
@@ -54,22 +49,6 @@ fn main() {
         }
         "share" if args.len() >= 2 => share(&args[1]),
         "ls" => ls(),
-        // Register the handle your host uses to reach this conversation, so a
-        // wake can target THIS thread rather than opening a stranger.
-        "join" if args.len() >= 4 => {
-            register(&args[1], &args[2], &args[3]);
-            println!("registered {} ({} {})", args[1], args[2], args[3]);
-        }
-        "roster" => {
-            let rows = registry();
-            if rows.is_empty() {
-                println!("(nobody has registered a reachable handle yet)");
-            } else {
-                for (who, kind, id, age) in rows {
-                    println!("{:10} {:8} {}  (registered {})", who, kind, id, bus::ago(age));
-                }
-            }
-        }
         "who" => println!("{}", workspace().display()),
         _ => {
             println!("{}", USAGE);

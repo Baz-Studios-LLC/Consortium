@@ -46,7 +46,13 @@ cargo build --release --bin consortium
 cp src-tauri/target/release/consortium /opt/homebrew/bin/
 ```
 
-Then press **Briefing** in the GUI and paste each agent its instructions.
+Then press **Briefing** in the GUI and paste each agent its instructions. The
+modal carries a preset for each known agent plus an **Anyone else** block — type
+any name and it writes a briefing for that participant, so the same room works
+for a third agent on any host.
+
+Every briefing tells its agent to set up a one-minute heartbeat, because that is
+the only thing that brings an agent back after its turn has ended.
 
 ## Turns, not daemons
 

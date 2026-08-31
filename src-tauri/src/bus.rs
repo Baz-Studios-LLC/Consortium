@@ -253,39 +253,6 @@ pub fn presence() -> Vec<(String, String, u64)> {
         .collect()
 }
 
-/// A participant registering the handle its host needs in order to reach it
-/// again — a Codex thread id, a Claude Code session id. Waking is impossible
-/// without this: knowing that "Codex" is away says nothing about WHICH Codex
-/// conversation is the one sitting in this room. Only the agent knows that, so
-/// only the agent can tell us.
-pub fn register(who: &str, kind: &str, id: &str) {
-    let dir = workspace().join(".consortium").join("registry");
-    let _ = fs::create_dir_all(&dir);
-    let _ = fs::write(
-        dir.join(format!("{}.json", slug(who))),
-        format!(
-            "{{\"who\":\"{}\",\"kind\":\"{}\",\"id\":\"{}\",\"at\":{}}}",
-            escape(who), escape(kind), escape(id), now_secs()
-        ),
-    );
-}
-
-/// (who, kind, id, seconds-since-registered)
-pub fn registry() -> Vec<(String, String, String, u64)> {
-    let dir = workspace().join(".consortium").join("registry");
-    let Ok(entries) = fs::read_dir(&dir) else { return Vec::new() };
-    let now = now_secs();
-    entries
-        .flatten()
-        .filter_map(|e| {
-            let b = fs::read_to_string(e.path()).ok()?;
-            let at: u64 = b.split("\"at\":").nth(1)?
-                .trim_matches(|c: char| !c.is_ascii_digit()).parse().ok()?;
-            Some((field(&b,"who")?, field(&b,"kind")?, field(&b,"id")?, now.saturating_sub(at)))
-        })
-        .collect()
-}
-
 pub fn read_lines() -> Vec<String> {
     let Ok(f) = File::open(log_path()) else { return Vec::new() };
     BufReader::new(f).lines().map_while(Result::ok).filter(|l| !l.trim().is_empty()).collect()

@@ -96,6 +96,14 @@
     width: min(760px, 88vw); max-height: 82vh; overflow-y: auto; padding: 18px 20px;
   }
   .modal h2 { margin: 0 0 4px; font-size: 15px; }
+  .brief-head .sub { color: var(--muted); font-size: 10.5px; }
+  .bind { margin: 0 0 8px; }
+  .bind input {
+    width: 100%; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 6px; padding: 6px 9px;
+    font: inherit; font-size: 12px; outline: none;
+  }
+  .bind input:focus { border-color: var(--accent); }
   .modal .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 14px; }
   .brief-block { margin-bottom: 16px; }
   .brief-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
@@ -149,17 +157,6 @@
     color: #5d677d; margin-bottom: 3px;
   }
   .chips { margin-top: 6px; }
-  .bind {
-    font-size: 10px; color: var(--muted); margin: 2px 8px 8px;
-    padding: 0 10px; display: flex; align-items: center; gap: 6px;
-  }
-  .bind select {
-    flex: 1 1 auto; min-width: 0; background: var(--panel-2); color: var(--text);
-    border: 1px solid var(--line); border-radius: 6px; padding: 3px 6px;
-    font: inherit; font-size: 10.5px; outline: none;
-  }
-  .bind select:focus { border-color: var(--accent); }
-  .bound { color: var(--ok); }
   .tool {
     display: inline-block; font-family: var(--mono); font-size: 10.5px;
     color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
@@ -280,8 +277,6 @@ let primary = localStorage.getItem('primary') || 'claude';
 let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
 let presence = {};          // name -> {state, age_secs}
-let threads = [];           // discovered conversations on both hosts
-let registry = {};          // name -> the thread the user bound them to
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -374,147 +369,166 @@ function renderParticipants() {
       };
     }
     box.appendChild(el);
-
-    // Which of this agent's conversations is the one in this room? Only the
-    // user can say, so offer the choice rather than guessing at "most recent".
-    const bind = document.createElement('div');
-    bind.className = 'bind';
-    const kind = a.id === 'codex' ? 'codex-thread' : 'claude-session';
-    const sel = document.createElement('select');
-    const mine = threads.filter(t => t.kind === kind);
-    const bound = registry[a.name];
-    sel.innerHTML = '<option value="">— not bound to a thread —</option>' +
-      mine.map(t => {
-        const lbl = (t.label || '(no opening message)').replace(/</g, '&lt;');
-        const sel2 = bound && bound.id === t.id ? ' selected' : '';
-        return `<option value="${t.id}"${sel2}>${agoOf(t.age_secs)} · ${lbl}</option>`;
-      }).join('');
-    sel.onchange = async () => {
-      if (!sel.value) return;
-      await invoke('register_thread', { who: a.name, kind, id: sel.value });
-      loadRegistry();
-    };
-    const tag = document.createElement('span');
-    tag.textContent = bound ? 'bound' : 'thread';
-    if (bound) tag.className = 'bound';
-    bind.appendChild(tag);
-    bind.appendChild(sel);
-    box.appendChild(bind);
   }
 }
 
-async function loadThreads() {
-  try { threads = await invoke('list_threads'); } catch (_) { threads = []; }
-  renderParticipants();
-}
-
-async function loadRegistry() {
-  try {
-    const rows = await invoke('thread_registry');
-    registry = {};
-    for (const r of rows) registry[r.who] = r;
-  } catch (_) { registry = {}; }
-  renderParticipants();
-}
-
 // ---------- briefing ----------
-function briefingFor(agentId) {
-  const me = nameOf(agentId);
-  const secs = (KNOWN.find(a => a.id === agentId) || {}).waitSecs || 120;
-  const peer = nameOf(KNOWN.find(a => a.id !== agentId).id);
-  const isPrimary = agentId === primary;
+// The briefing. Written to be pasted into ANY agent's session, not just the two
+// we know about — the room does not care what is on the other end, only that it
+// can run the CLI. Host-specific detail is confined to the heartbeat section.
+const HOST_HEARTBEAT = {
+  claude:
+    'Your host is Claude Code. Two things to set up, both one-off:\n' +
+    '  - Run: /loop 1m Check Consortium: run `consortium read NAME`. If there are new\n' +
+    '    messages, respond via `consortium post NAME "..."`. If nothing, stay quiet.\n' +
+    '  - Install the consortium plugin if it is available. Its Stop hook refuses to end\n' +
+    '    your turn while messages are queued, which covers you while you are awake.',
+  codex:
+    'Your host is Codex. Create a scheduled automation that runs every minute:\n' +
+    '  - Command: consortium read NAME\n' +
+    '  - If the output is "(nothing new)", do nothing and stay silent.\n' +
+    '  - Otherwise handle what came back and reply with `consortium post NAME "..."`.\n' +
+    'Codex automations re-enter after a turn has ended, which is what makes this work.',
+  generic:
+    'If your host can schedule recurring work — a cron job, a timer, a scheduled\n' +
+    'automation — set one up now that runs `consortium read NAME` every minute,\n' +
+    'stays silent when the output is "(nothing new)", and replies when it is not.\n' +
+    'This is the only thing that brings you back after a turn has ended. If your\n' +
+    'host cannot schedule anything, say so in the room so nobody waits on you.'
+};
 
-  const role = isPrimary
-    ? 'You are the primary here: you own the direction and the final call. Hand ' +
-      peer + ' the pieces where a second pair of eyes or parallel work genuinely ' +
-      'helps, and say plainly when you disagree with them.'
-    : 'You are assisting ' + nameOf(primary) + ', who owns the direction and the ' +
-      'final call. Take on what they hand you, and push back when you think they ' +
-      'are wrong — you are a colleague, not a rubber stamp.';
+function briefingFor(name, opts) {
+  opts = opts || {};
+  const host = opts.host || 'generic';
+  const waitSecs = opts.waitSecs || 55;
+  const others = (opts.peers || []).filter(p => p !== name);
+  const peerList = others.length
+    ? others.join(', ') + ' and the user'
+    : 'the user, and any other agents who join';
+
+  const role =
+    opts.role === 'primary'
+      ? 'You are the primary here. You own the direction and the final call. Hand work\n' +
+        'to the others where a second pair of eyes or parallel effort genuinely helps,\n' +
+        'and say plainly when you disagree with them.'
+      : opts.role === 'alt'
+      ? 'You are assisting, not leading. Take on what you are handed and support the\n' +
+        "primary's direction — but push back when you think they are wrong. You are a\n" +
+        'colleague, not a rubber stamp. They own the final call.'
+      : 'Treat the others as colleagues. Disagree when you disagree, and say so plainly.';
 
   return [
-    'You are ' + me + ', working with ' + peer + ' and the user in a shared session called Consortium.',
+    'You are ' + name + ', working in a shared room called Consortium alongside ' + peerList + '.',
     '',
-    'You each run in your own app. You reach each other through a local command ' +
-    'line tool called `consortium`. It contacts no network and needs no login — it ' +
-    'only moves messages and files between you on this machine.',
+    'Everyone here runs in their own app. You reach each other through a local command',
+    'line tool called `consortium`. It contacts no network and needs no login — it only',
+    'moves messages and files between processes on this machine.',
     '',
-    'Your name in the room is: ' + me,
+    'YOUR NAME IN THE ROOM IS: ' + name,
+    'Use it exactly, every time. It is how the others address you and how your unread',
+    'cursor is tracked. Using a different name loses your place in the conversation.',
     '',
-    'Say something to the room:',
-    '    consortium post ' + me + ' "your message"',
+    'COMMANDS',
+    '    consortium post  ' + name + ' "your message"      say something to the room',
+    '    consortium read  ' + name + '                      read what you have not seen',
+    '    consortium wait  ' + name + ' --secs ' + waitSecs + '            block until someone speaks',
+    '    consortium share /path/to/file        put a file in the shared folder',
+    '    consortium ls                         list the shared folder',
+    '    consortium who                        print the shared folder path',
     '',
-    'Read anything you have not seen yet:',
-    '    consortium read ' + me,
+    'STAYING REACHABLE — read this part twice',
+    'You only exist while you hold a turn. The moment your turn ends you stop, and',
+    'anything posted afterwards cannot reach you. Nothing can wake you from outside.',
+    'Two habits fix this, and you need both:',
     '',
-    'Block until someone replies:',
-    '    consortium wait ' + me + ' --secs ' + secs,
+    '1. Do not end a turn while you are still expecting something. End it by blocking',
+    '   on the room instead:',
+    '       consortium wait ' + name + ' --secs ' + waitSecs,
+    '   It returns the instant anyone speaks. Handle what comes back, then wait again.',
+    '   Chaining waits is the intended pattern, not a mistake — each costs one command.',
+    '   ' + waitSecs + ' seconds is about the longest a single command can run in your environment;',
+    '   if commands are cut off sooner, lower it.',
     '',
-    'Share a file, list what is shared, or find the shared folder:',
-    '    consortium share /path/to/file',
-    '    consortium ls',
-    '    consortium who',
+    '2. Set up a heartbeat so you can come BACK after your turn ends.',
+    '   ' + HOST_HEARTBEAT[host].split('NAME').join(name),
     '',
-    'STAYING REACHABLE — the most important part:',
-    'You only exist while you have a turn. The moment your turn ends you stop, ' +
-    'and anything posted afterwards will not reach you until the user gives you ' +
-    'a new turn. There is no notification that can wake you.',
+    'When you are genuinely finished, post a short sign-off so nobody waits on you.',
     '',
-    'So do not finish your turn while you are still expecting something. End it ' +
-    'by blocking on the room instead:',
-    '    consortium wait ' + me + ' --secs ' + secs,
-    '',
-    secs + ' seconds is about the longest a single command can block in your ' +
-    'environment before it is cut off, so that is one wait. It returns the instant ' +
-    'someone speaks. Handle what comes back, then wait again — chaining waits back ' +
-    'to back is how you stay in the room, and several in a row is correct, not a ' +
-    'mistake. Each one costs a single command.',
-    '',
-    'When you are genuinely finished, `post` a short sign-off first so the others ' +
-    'know not to expect a reply, and then stop.',
-    '',
-    'How to use it well:',
-    '- You decide what is worth saying. Your reasoning, tool calls and exploration ' +
-    'stay in your own session; nobody sees them. Only `post` when you actually have ' +
-    'something for the others — a question, a decision, a disagreement, a handoff, ' +
-    'or a result worth knowing.',
-    '- After posting something that needs an answer, run `consortium wait ' + me +
-    '` so you actually receive the reply instead of moving on.',
-    '- Run `consortium read ' + me + '` whenever you want to check for new messages.',
-    '- A message is the right size for discussion. For anything bigger — code, ' +
-    'drafts, data, images — `consortium share` the file and say in your message ' +
-    'which file you wrote.',
+    'HOW TO USE THE ROOM WELL',
+    '- Say only what is worth saying. Your reasoning, tool calls and exploration stay in',
+    '  your own session and nobody sees them. Post when you have a question, a decision,',
+    '  a disagreement, a handoff, or a result someone needs.',
     '- Address people by name so it is obvious who you are asking.',
+    '- A message is for discussion; a file is for substance. For code, drafts, data or',
+    '  images, `consortium share` the file and say in your message which file you wrote.',
+    '- Do not try to launch or invoke another agent. They are already running. Posting is',
+    '  how you reach them.',
+    '- Reporting that you tried something and it did not break is a real result. Say so',
+    '  rather than inventing a finding.',
     '',
     role
   ].join('\n');
 }
 
+function briefBlock(name, opts, subtitle) {
+  const block = document.createElement('div');
+  block.className = 'brief-block';
+  block.innerHTML =
+    '<div class="brief-head">' +
+      '<span class="nm"></span>' +
+      '<span class="sub"></span>' +
+      '<button class="ghost copy" style="margin-left:auto">Copy</button>' +
+    '</div><textarea spellcheck="false"></textarea>';
+  block.querySelector('.nm').textContent = name;
+  block.querySelector('.sub').textContent = subtitle || '';
+  const ta = block.querySelector('textarea');
+  ta.value = briefingFor(name, opts);
+  const btn = block.querySelector('.copy');
+  btn.onclick = async () => {
+    await navigator.clipboard.writeText(ta.value);
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1400);
+  };
+  return block;
+}
+
 function openBriefing() {
   const box = $('briefBody');
   box.innerHTML = '';
+  const peers = KNOWN.map(a => a.name);
+
   for (const a of KNOWN) {
-    const block = document.createElement('div');
-    block.className = 'brief-block';
-    block.innerHTML =
-      '<div class="brief-head">' +
-        '<span class="dot ' + a.dot + '"></span>' +
-        '<span class="nm"></span>' +
-        '<span class="role' + (a.id === primary ? ' primary' : '') + '"></span>' +
-        '<button class="ghost copy" style="margin-left:auto">Copy</button>' +
-      '</div><textarea spellcheck="false"></textarea>';
-    block.querySelector('.nm').textContent = a.name;
-    block.querySelector('.role').textContent = a.id === primary ? 'primary' : 'alt';
-    const ta = block.querySelector('textarea');
-    ta.value = briefingFor(a.id);
-    const btn = block.querySelector('.copy');
-    btn.onclick = async () => {
-      await navigator.clipboard.writeText(ta.value);
-      btn.textContent = 'Copied';
-      setTimeout(() => { btn.textContent = 'Copy'; }, 1400);
-    };
-    box.appendChild(block);
+    box.appendChild(briefBlock(a.name, {
+      host: a.id,
+      waitSecs: a.waitSecs,
+      peers,
+      role: a.id === primary ? 'primary' : 'alt'
+    }, a.id === primary ? 'primary · ' + a.name + ' Code' : 'alt'));
   }
+
+  // Anyone else — paste this into any thread, on any host, under any name.
+  const custom = document.createElement('div');
+  custom.className = 'brief-block';
+  custom.innerHTML =
+    '<div class="brief-head">' +
+      '<span class="nm">Anyone else</span>' +
+      '<span class="sub">name it, then copy — works on any host</span>' +
+    '</div>' +
+    '<div class="bind"><input id="customName" placeholder="Name in the room, e.g. Gemini" /></div>' +
+    '<div id="customBlock"></div>';
+  box.appendChild(custom);
+
+  const render = () => {
+    const name = ($('customName').value || '').trim() || 'Agent';
+    const host = $('customName').value.toLowerCase().includes('codex') ? 'codex'
+               : $('customName').value.toLowerCase().includes('claude') ? 'claude' : 'generic';
+    const slot = $('customBlock');
+    slot.innerHTML = '';
+    slot.appendChild(briefBlock(name, { host, waitSecs: 55, peers: peers.concat([name]) }, ''));
+  };
+  $('customName').oninput = render;
+  render();
+
   $('scrim').classList.add('open');
 }
 
@@ -581,16 +595,13 @@ $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
 $('refreshBtn').onclick = () => {
-  loadWorkspace(); pollBus(); pollPresence(); loadThreads(); loadRegistry(); checkCli();
+  loadWorkspace(); pollBus(); pollPresence(); checkCli();
 };
 $('prompt').addEventListener('keydown', (e) => {
   if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
 });
 
 renderParticipants();
-loadThreads();
-loadRegistry();
-setInterval(loadThreads, 15000);   // new conversations appear as they are used
 checkCli();
 loadWorkspace();
 pollBus();
