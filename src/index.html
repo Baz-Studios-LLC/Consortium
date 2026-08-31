@@ -458,11 +458,11 @@
     <textarea id="prompt" rows="1" placeholder="Message the room…  everyone here sees it  (Enter sends · Shift+Enter for a new line)"></textarea>
     <button id="sendBtn">Send</button>
   </div>
-  <div class="opts">
+  <div class="opts" id="opts">
     <span class="opt-label" id="cliState">Checking for the consortium CLI…</span>
     <button class="ghost" id="installCli" style="display:none">Install CLI</button>
   </div>
-  <div class="hint" id="status">Ready.</div>
+  <div class="hint" id="status"></div>
 </footer>
 
 <div class="scrim" id="scrim">
@@ -1117,10 +1117,14 @@ async function loadWorkspace() {
 async function checkCli() {
   const path = await invoke('cli_installed');
   const btn = $('installCli');
-  // Says what the state means, not just what it is. "ready at <path>" is only
-  // meaningful once you already know what the CLI is for.
+
+  // Silent when it is fine. A working CLI is the expected state, and a line
+  // reporting it sat under every conversation forever saying nothing that
+  // changes what anyone does. It speaks up when there is a problem, which is
+  // the only time the path is worth reading.
+  $('opts').hidden = !!path;
   $('cliState').textContent = path
-    ? 'Agents can reach the CLI — ' + path
+    ? ''
     : 'consortium CLI not installed. The agents talk by running it, so the room '
       + 'cannot work until it is.';
   $('cliState').style.color = path ? '' : 'var(--err)';
@@ -1139,6 +1143,7 @@ $('installCli').onclick = async () => {
       // an agent app that was already open cannot find a CLI installed after it
       // launched. Saying so here saves the same confusing round of "it is on my
       // PATH though" that this message used to cause.
+      $('opts').hidden = false;
       $('cliState').textContent =
         'consortium CLI installed at ' + res.path +
         ' — if an agent still cannot find it, quit and reopen that agent’s app: ' +
@@ -1147,6 +1152,7 @@ $('installCli').onclick = async () => {
       btn.style.display = 'none';
     } else {
       // Installed, but somewhere the agents' shells will not look.
+      $('opts').hidden = false;
       $('cliState').textContent =
         'Installed to ' + res.path + ' — but that folder is not on your PATH, so the ' +
         'agents still cannot run it. Add it to your shell profile.';
@@ -1207,6 +1213,15 @@ async function checkUpdate() {
     else pill.classList.remove('show');
   }
 }
+
+// Transient by nature: it reports what just happened, and an hour later it is
+// only clutter claiming to be current.
+let statusClear = null;
+const status = $('status');
+new MutationObserver(() => {
+  clearTimeout(statusClear);
+  if (status.textContent) statusClear = setTimeout(() => { status.textContent = ''; }, 8000);
+}).observe(status, { childList: true, characterData: true, subtree: true });
 
 // ---------- wiring ----------
 $('sendBtn').onclick = send;
