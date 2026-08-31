@@ -49,7 +49,8 @@
   main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
   aside {
     border-right: 1px solid var(--line); background: var(--panel);
-    display: grid; grid-template-rows: auto 1fr; min-height: 0;
+    display: grid; grid-template-rows: auto 1fr;
+    min-height: 0; min-width: 0; overflow: hidden;
   }
   .sec-title {
     font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
@@ -107,14 +108,18 @@
 
   .files { overflow-y: auto; padding-bottom: 12px; min-height: 0; }
   .file {
-    display: flex; gap: 8px; align-items: center;
+    display: flex; gap: 8px; align-items: center; overflow: hidden;
     padding: 5px 18px; font-family: var(--mono); font-size: 11px;
   }
-  .file .sz { margin-left: auto; color: var(--muted); font-size: 10px; }
+  .file .nm {
+    flex: 1 1 auto; min-width: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .file .sz { flex: none; color: var(--muted); font-size: 10px; }
   .empty { color: var(--muted); padding: 6px 18px; font-size: 11.5px; font-style: italic; }
 
   /* ---- transcript ---- */
-  #log { overflow-y: auto; padding: 18px 22px; min-height: 0; }
+  #log { overflow-y: auto; padding: 18px 22px; min-height: 0; min-width: 0; }
   .turn { margin-bottom: 16px; max-width: 900px; }
   .turn .who {
     font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
@@ -338,9 +343,9 @@ function renderParticipants() {
     // An agent only sees new messages while it is blocked on `wait`. Once its
     // turn ends nothing can reach it, so say that rather than implying presence.
     el.querySelector('.vr').textContent =
-      !joined      ? 'not joined yet'
-      : listening  ? 'listening · will see new messages'
-                   : 'away since ' + agoOf(p ? p.age_secs : 0) + ' · needs a turn';
+      !joined      ? 'not joined'
+      : listening  ? 'listening'
+                   : 'away · ' + agoOf(p ? p.age_secs : 0);
     el.title = listening
       ? a.name + ' is blocked on `consortium wait` and will pick up your next message.'
       : a.name + ' has finished its turn. Give it a turn in its own app to bring it back.';
@@ -478,9 +483,10 @@ async function loadWorkspace() {
   for (const f of files) {
     const el = document.createElement('div');
     el.className = 'file';
-    el.innerHTML = '<span></span><span class="sz"></span>';
-    el.children[0].textContent = (f.is_dir ? '▸ ' : '  ') + f.name;
-    el.children[1].textContent = f.is_dir ? '' : fmtSize(f.size);
+    el.innerHTML = '<span class="nm"></span><span class="sz"></span>';
+    el.querySelector('.nm').textContent = (f.is_dir ? '▸ ' : '') + f.name;
+    el.querySelector('.sz').textContent = f.is_dir ? '' : fmtSize(f.size);
+    el.title = f.name;
     box.appendChild(el);
   }
 }
