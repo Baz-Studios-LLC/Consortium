@@ -365,6 +365,22 @@ fn conversation_create(name: String, dir: Option<String>) -> Result<conversation
     conversation::create(&name, dir)
 }
 
+/// Changes where a room works. Empty puts it back in the shared workspace.
+#[tauri::command]
+fn conversation_set_dir(slug: String, dir: Option<String>) -> Result<(), String> {
+    let dir = dir
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty())
+        .map(std::path::PathBuf::from);
+
+    if let Some(d) = &dir {
+        if !d.is_dir() {
+            return Err(format!("{} is not a folder on this machine", d.display()));
+        }
+    }
+    conversation::set_dir(&slug, dir)
+}
+
 /// Claude Code sessions on this machine, for choosing one to continue.
 #[tauri::command]
 fn claude_sessions() -> Vec<sessions::SessionInfo> {
@@ -777,6 +793,7 @@ fn main() {
             conversation_select,
             conversation_create,
             conversation_attach,
+            conversation_set_dir,
             claude_sessions,
             app_version,
             cli_installed,

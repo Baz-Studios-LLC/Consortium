@@ -149,6 +149,35 @@ pub fn create(name: &str, dir: Option<PathBuf>) -> Result<Conversation, String> 
     Ok(made)
 }
 
+/// Moves a conversation to a different folder, or back to the workspace.
+///
+/// Sessions are scoped to the directory they were held in, so a room that
+/// moves cannot resume what it said in the old place: the derived id will not
+/// be found there and a fresh session starts. That is a real cost and the
+/// caller should say so, but it is the caller's decision to make — a room
+/// created without a folder is otherwise stuck without one forever.
+pub fn set_dir(slug: &str, dir: Option<PathBuf>) -> Result<(), String> {
+    let mut store = load();
+    let Some(conversation) = store.conversations.iter_mut().find(|c| c.slug == slug) else {
+        return Err(format!("there is no conversation called {slug}"));
+    };
+
+    // An attached session belongs to the old folder and cannot be resumed
+    // from the new one. Keeping it would fail on the next wake with 'No
+    // conversation found', which is a confusing way to learn this.
+    if conversation.dir != dir {
+        conversation.sessions.clear();
+    }
+    conversation.dir = dir.clone();
+    save(&store)?;
+    bus::log(&format!(
+        "conversation: {slug} now works in {}",
+        dir.map(|d| d.display().to_string())
+            .unwrap_or_else(|| "the shared workspace".into())
+    ));
+    Ok(())
+}
+
 /// Points a conversation's agent at a session that already exists.
 ///
 /// The way to say "this room continues that conversation" — including one

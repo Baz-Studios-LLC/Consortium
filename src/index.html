@@ -317,7 +317,16 @@
     border-radius: 7px; padding: 7px 9px; font-size: 12px; font-family: inherit;
     width: 100%; box-sizing: border-box;
   }
-  .newconv-row { display: flex; gap: 5px; }
+  .newconv-row, .field-row { display: flex; gap: 5px; }
+  .field-row input { min-width: 0; }
+  /* The lower half configures the room selected above, which was not visible
+     when it was a bare list of controls: a heading naming that room, and
+     labels on the fields, is the difference between settings and clutter. */
+  .room-settings { margin-top: 18px; padding-top: 4px; border-top: 1px solid var(--line); }
+  .field-label {
+    display: block; font-size: 11px; color: var(--muted);
+    padding: 0 2px 4px; margin-top: 12px;
+  }
   /* Armed, not alarming: the second click empties the room, and the messages
      are archived rather than destroyed, so this warns without shouting. */
   button.ghost.armed { border-color: var(--warn, #d08770); color: var(--warn, #d08770); }
@@ -394,7 +403,7 @@
     </div>
     <div class="panel-body">
       <div id="conversations"></div>
-      <button class="ghost wide" id="newConvBtn">New room</button>
+      <button class="ghost wide" id="newConvBtn">+ New room</button>
       <div class="newconv" id="newConv" hidden>
         <input id="convName" placeholder="Name, e.g. BazMail">
         <input id="convDir" placeholder="Project folder — where agents will work">
@@ -404,10 +413,21 @@
         </div>
       </div>
 
-      <div class="sec-title">Claude session</div>
-      <select id="sessionPick"></select>
-      <button class="ghost wide" id="attachBtn">Continue this session</button>
-      <div class="hint" id="sessionHint"></div>
+      <div class="room-settings">
+        <div class="sec-title" id="settingsTitle">Room</div>
+
+        <label class="field-label" for="roomDir">Project folder</label>
+        <div class="field-row">
+          <input id="roomDir" placeholder="Shared workspace">
+          <button class="ghost" id="roomDirSave">Save</button>
+        </div>
+        <div class="hint" id="dirHint"></div>
+
+        <label class="field-label" for="sessionPick">Claude session</label>
+        <select id="sessionPick"></select>
+        <button class="ghost wide" id="attachBtn">Continue this session</button>
+        <div class="hint" id="sessionHint"></div>
+      </div>
     </div>
   </div>
 </main>
@@ -713,6 +733,14 @@ function renderSessionPicker() {
   const dir = (room && room.dir) || null;
   const usable = dir ? claudeSessions.filter(s => sameDir(s.dir, dir)) : [];
 
+  // Naming the room these settings belong to. Without it the folder and the
+  // session read as global, which is the opposite of what they are.
+  $('settingsTitle').textContent = room ? room.name : 'Room';
+  if (document.activeElement !== $('roomDir')) $('roomDir').value = dir || '';
+  $('dirHint').textContent = dir
+    ? 'Agents woken here work in this folder.'
+    : 'Agents woken here work in the shared workspace.';
+
   pick.innerHTML = '';
   for (const s of usable) {
     const o = document.createElement('option');
@@ -725,11 +753,26 @@ function renderSessionPicker() {
   pick.disabled = !usable.length;
   $('attachBtn').disabled = !usable.length;
   $('sessionHint').textContent =
-    attached      ? 'Continuing an existing session.'
-    : !dir        ? 'Give this room a project folder to continue an existing session.'
-    : !usable.length ? 'No Claude sessions in this folder yet. A new one starts on first use.'
-                    : 'Or leave it: this room has its own session already.';
+    attached         ? 'This room is continuing a session you picked.'
+    : !dir           ? 'Set a project folder above to continue a session held there.'
+    : !usable.length ? 'No Claude sessions in this folder yet — this room starts its own.'
+                     : 'This room has its own session. Pick one above to continue that instead.';
 }
+
+// Changing the folder drops any attached session, because a session cannot be
+// resumed from a different directory. Said plainly rather than discovered as a
+// failed wake later.
+$('roomDirSave').onclick = async () => {
+  const dir = $('roomDir').value.trim() || null;
+  try {
+    await invoke('conversation_set_dir', { slug: activeRoom, dir });
+    await loadRooms();
+    await loadSessions();
+    $('status').textContent = dir
+      ? 'This room now works in ' + dir
+      : 'This room now works in the shared workspace.';
+  } catch (e) { $('dirHint').textContent = String(e); }
+};
 
 $('attachBtn').onclick = async () => {
   const id = $('sessionPick').value;
