@@ -705,8 +705,10 @@ async function selectRoom(slug) {
   $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
   renderRooms(); renderRoomSettings();
   pollBus(); pollPresence();
-  // The drawer has done its job; the transcript is what you wanted.
-  closeRooms();
+  // Deliberately stays open. Picking a room is usually the first of several
+  // things — check its threads, look at another room, set a folder — and
+  // closing after each one turns setting up into a sequence of reopenings.
+  // It closes when asked: Escape, the backdrop, or the buttons.
 }
 
 $('newConvBtn').onclick = () => {
