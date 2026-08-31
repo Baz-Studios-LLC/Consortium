@@ -1,0 +1,27 @@
+{
+  "version": "0.1.0",
+  "notes": "An in-house development studio that drives coding-agent CLIs against a shared workspace.",
+  "pub_date": "2026-08-31T19:14:25.149Z",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUHc5dXFtVjJMcXgxV2k1QkNXaUdNVzN0NXlOYmJJTVVlTFJ6S1pjcGpNZXdkZDB6L3FrUFk4cG9TVXFzR1doUGp2dEJrdng1bmNwNXBsZVduSGtIem1hczVkcWN2TUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MjAzNjI1CWZpbGU6Q29uc29ydGl1bS5hcHAudGFyLmd6Cmh5TUxXeTAzSUd4NjBGTFhid0lQaTBCL0R1MzU1MU92S3k0bjZBUDFQUTgza3NvdTRFNGFnUHJTaE9CRlFKOXNvWDVUeWtDOHIrelNHdlllVDlaSUN3PT0K",
+      "url": "https://github.com/Baz-Studios-LLC/Consortium/releases/download/v0.1.0/Consortium_aarch64.app.tar.gz"
+    },
+    "darwin-aarch64-app": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUHc5dXFtVjJMcXgxV2k1QkNXaUdNVzN0NXlOYmJJTVVlTFJ6S1pjcGpNZXdkZDB6L3FrUFk4cG9TVXFzR1doUGp2dEJrdng1bmNwNXBsZVduSGtIem1hczVkcWN2TUFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MjAzNjI1CWZpbGU6Q29uc29ydGl1bS5hcHAudGFyLmd6Cmh5TUxXeTAzSUd4NjBGTFhid0lQaTBCL0R1MzU1MU92S3k0bjZBUDFQUTgza3NvdTRFNGFnUHJTaE9CRlFKOXNvWDVUeWtDOHIrelNHdlllVDlaSUN3PT0K",
+      "url": "https://github.com/Baz-Studios-LLC/Consortium/releases/download/v0.1.0/Consortium_aarch64.app.tar.gz"
+    },
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUHc5dXFtVjJMcTJYTDcvdzJZOFpnQUQwOFJUNmJ2RW9Sb2dkWSszZy9VeERPMTNzUkhFemw3cVpOT2xRakI4VTRJenhjeVMwTmh3VkJCZDVuNzdGaStnc0loVXFrTVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MjAzNjYyCWZpbGU6Q29uc29ydGl1bV8wLjEuMF94NjRfZW4tVVMubXNpCnlMLytwK0RSdUZ3eFFCWDBZZE03UmhvR0tXTG9kQTRybDRxdk1VUDYzYnc5NUduQk1FRmZzZWdOTnM5S2ljN3dpSitpS2tLYndEL0s0eFFEM0pBeEF3PT0K",
+      "url": "https://github.com/Baz-Studios-LLC/Consortium/releases/download/v0.1.0/Consortium_0.1.0_x64_en-US.msi"
+    },
+    "windows-x86_64-msi": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUHc5dXFtVjJMcTJYTDcvdzJZOFpnQUQwOFJUNmJ2RW9Sb2dkWSszZy9VeERPMTNzUkhFemw3cVpOT2xRakI4VTRJenhjeVMwTmh3VkJCZDVuNzdGaStnc0loVXFrTVFvPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MjAzNjYyCWZpbGU6Q29uc29ydGl1bV8wLjEuMF94NjRfZW4tVVMubXNpCnlMLytwK0RSdUZ3eFFCWDBZZE03UmhvR0tXTG9kQTRybDRxdk1VUDYzYnc5NUduQk1FRmZzZWdOTnM5S2ljN3dpSitpS2tLYndEL0s0eFFEM0pBeEF3PT0K",
+      "url": "https://github.com/Baz-Studios-LLC/Consortium/releases/download/v0.1.0/Consortium_0.1.0_x64_en-US.msi"
+    },
+    "windows-x86_64-nsis": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTUHc5dXFtVjJMcThuaXdaRE54OUNLdXhwcTArUUVzaGNOZm9ITnk3OVhTQlpPdm8rekRIVTVqQzlXUGpXZjd6azEvdDB4NUtjaGdzMFRBQk9PbE0wam5rVHNVZjFGNVFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzg4MjAzNjYyCWZpbGU6Q29uc29ydGl1bV8wLjEuMF94NjQtc2V0dXAuZXhlCnJuOUdmV3lMTStnM1Q5cDdIc2FOSFBOQnBCNkt2UHhTRVRPMm0vZzhzbEp1aFVkenR6N0s3S25QTlBVVVU3TWp0UDd2RytCalNUN3J6SGdrajRlTkNBPT0K",
+      "url": "https://github.com/Baz-Studios-LLC/Consortium/releases/download/v0.1.0/Consortium_0.1.0_x64-setup.exe"
+    }
+  }
+}
