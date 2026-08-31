@@ -46,7 +46,22 @@
   }
 
   /* ---- main ---- */
-  main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+  main {
+    display: grid; grid-template-columns: 260px 1fr; min-height: 0;
+    transition: grid-template-columns 160ms ease;
+  }
+  /* Collapsing the track rather than hiding the element: display:none would
+     make the transcript jump, where a track can slide. overflow:hidden on the
+     aside is what stops its contents spilling while it narrows. */
+  body.rail-hidden main { grid-template-columns: 0 1fr; }
+  body.rail-hidden aside { border-right-color: transparent; }
+  .ghost.icon {
+    padding: 0; width: 30px; font-size: 14px; line-height: 1;
+    -webkit-app-region: no-drag;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    main { transition: none; }
+  }
   aside {
     border-right: 1px solid var(--line); background: var(--panel);
     display: grid; grid-template-rows: auto 1fr;
@@ -212,6 +227,7 @@
 <body>
 
 <header>
+  <button class="ghost icon" id="sidebarBtn" title="Hide the sidebar" aria-label="Hide the sidebar" aria-expanded="true">☰</button>
   <span class="brand">Consortium</span>
   <span class="hint" id="sub">development studio</span>
   <div class="ws">
@@ -310,7 +326,24 @@ async function pollPresence() {
     const rows = await invoke('bus_presence');
     presence = {};
     for (const r of rows) presence[r.who] = r;
-    renderParticipants();
+    const RAIL_KEY = 'consortium.railHidden';
+function applyRail(hidden) {
+  document.body.classList.toggle('rail-hidden', hidden);
+  const btn = $('sidebarBtn');
+  btn.setAttribute('aria-expanded', String(!hidden));
+  btn.title = hidden ? 'Show the sidebar' : 'Hide the sidebar';
+  btn.setAttribute('aria-label', btn.title);
+}
+$('sidebarBtn').onclick = () => {
+  const hidden = !document.body.classList.contains('rail-hidden');
+  localStorage.setItem(RAIL_KEY, String(hidden));
+  applyRail(hidden);
+};
+// Applied before first paint of the list so a collapsed sidebar does not
+// flash open on every launch.
+applyRail(localStorage.getItem(RAIL_KEY) === 'true');
+
+renderParticipants();
   } catch (_) { /* no presence yet */ }
 }
 
