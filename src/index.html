@@ -640,24 +640,26 @@ $('installCli').onclick = async () => {
 // ---------- self-update ----------
 let pendingUpdate = null;
 
+// Fetched in the background and applied when the window closes, so nothing
+// interrupts a conversation and nobody has to click anything. The pill is
+// information, not an action.
 async function checkUpdate() {
   try {
-    const version = await invoke('update_check');
+    const version = await invoke('update_download');
     pendingUpdate = version;
     const pill = $('updatePill');
-    if (version) { pill.textContent = 'Update to ' + version; pill.classList.add('show'); }
-    else pill.classList.remove('show');
-  } catch (_) { /* offline or no manifest yet — try again later */ }
+    if (version) {
+      pill.textContent = version + ' ready — starts next time';
+      pill.classList.add('show');
+      // Nothing to click: it is a statement about what will happen, not an
+      // action. Leaving it live would offer a button that does nothing.
+      pill.disabled = true;
+      pill.style.cursor = 'default';
+    } else {
+      pill.classList.remove('show');
+    }
+  } catch (_) { /* offline, or no manifest yet — the next check tries again */ }
 }
-
-$('updatePill').onclick = async () => {
-  if (!pendingUpdate) return;
-  const pill = $('updatePill');
-  pill.disabled = true;
-  pill.textContent = 'Updating…';
-  try { await invoke('update_install'); }          // restarts on success
-  catch (e) { pill.disabled = false; pill.textContent = 'Update failed — retry'; }
-};
 
 // ---------- wiring ----------
 $('runBtn').onclick = send;

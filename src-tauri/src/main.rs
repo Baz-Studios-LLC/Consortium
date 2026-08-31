@@ -87,6 +87,20 @@ struct Studio {
     /// Kept alive deliberately: a dropped watcher stops watching, so one that
     /// is not held somewhere quietly does nothing at all.
     watcher: Mutex<Option<RecommendedWatcher>>,
+    /// An update that has been fetched and is waiting for the app to close.
+    pending_update: Mutex<Option<PendingUpdate>>,
+}
+
+/// A downloaded update, held until the app exits.
+///
+/// Downloading and installing are separated on purpose. Installing restarts the
+/// app, and this is a chat window — restarting it mid-sentence would throw away
+/// whatever the user was typing. Applying the update on the way out costs them
+/// nothing and asks them nothing.
+struct PendingUpdate {
+    version: String,
+    update: tauri_plugin_updater::Update,
+    bytes: Vec<u8>,
 }
 
 // ---------------------------------------------------------------------------
@@ -362,18 +376,40 @@ async fn update_check(app: AppHandle) -> Result<Option<String>, String> {
     }
 }
 
+/// Fetches an update and holds it for the exit handler.
+///
+/// Nothing is asked and nothing restarts. The next time the window is closed the
+/// update is applied, and the version after that is the one that opens.
 #[tauri::command]
-async fn update_install(app: AppHandle) -> Result<(), String> {
+async fn update_download(
+    app: AppHandle,
+    studio: State<'_, Studio>,
+) -> Result<Option<String>, String> {
     use tauri_plugin_updater::UpdaterExt;
+
+    // Already downloaded and waiting — checking again would fetch the same
+    // release a second time on every interval.
+    if let Some(pending) = studio.pending_update.lock().unwrap().as_ref() {
+        return Ok(Some(pending.version.clone()));
+    }
+
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
-        return Ok(());
+        return Ok(None);
     };
-    update
-        .download_and_install(|_, _| {}, || {})
+
+    let version = update.version.clone();
+    let bytes = update
+        .download(|_, _| {}, || {})
         .await
         .map_err(|e| e.to_string())?;
-    app.restart();
+
+    *studio.pending_update.lock().unwrap() = Some(PendingUpdate {
+        version: version.clone(),
+        update,
+        bytes,
+    });
+    Ok(Some(version))
 }
 
 // ---------------------------------------------------------------------------
@@ -423,6 +459,7 @@ fn main() {
             // Held for the life of the app: dropping a watcher stops it, so a
             // watcher that is not kept somewhere silently watches nothing.
             watcher: Mutex::new(None),
+            pending_update: Mutex::new(None),
         })
         .setup(move |app| {
             match watch_workspace(app.handle().clone(), workspace.clone()) {
@@ -447,8 +484,23 @@ fn main() {
             cli_installed,
             install_cli,
             update_check,
-            update_install
+            update_download
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Consortium");
+        .build(tauri::generate_context!())
+        .expect("error while starting Consortium")
+        .run(|app, event| {
+            // Applied on the way out, where a restart costs nothing. Doing it
+            // while the window is open would discard whatever was half-typed in
+            // the composer, which is the whole reason this was a manual click
+            // before rather than automatic.
+            if matches!(event, tauri::RunEvent::Exit) {
+                let state = app.state::<Studio>();
+                let pending = state.pending_update.lock().unwrap().take();
+                if let Some(p) = pending {
+                    if let Err(e) = p.update.install(&p.bytes) {
+                        eprintln!("could not install update {}: {e}", p.version);
+                    }
+                }
+            }
+        });
 }
