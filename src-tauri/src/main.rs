@@ -285,6 +285,20 @@ fn agent_states(studio: tauri::State<Studio>) -> Vec<AgentStatus> {
         .collect()
 }
 
+/// Empties the room and tells the manager to start over.
+///
+/// Both, or neither. Archiving the file while the manager still believes it
+/// is 8000 lines in would leave a room that accepts messages and wakes nobody
+/// — working, to look at, and inert.
+#[tauri::command]
+fn bus_clear(studio: tauri::State<Studio>) -> Result<String, String> {
+    let archived = bus::archive()?;
+    if let Some(manager) = studio.agents.lock().unwrap().clone() {
+        manager.reset();
+    }
+    Ok(archived.display().to_string())
+}
+
 #[tauri::command]
 fn bus_post(from: String, text: String) {
     bus::post(&from, &text);
@@ -651,6 +665,7 @@ fn main() {
             bus_presence,
             agent_states,
             bus_post,
+            bus_clear,
             app_version,
             cli_installed,
             install_cli,

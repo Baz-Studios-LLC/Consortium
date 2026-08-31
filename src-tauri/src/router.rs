@@ -24,6 +24,16 @@ pub struct Envelope<'a> {
 /// when the convention fails, which is a question of when rather than whether.
 pub const MAX_AGENT_HOPS: u32 = 8;
 
+/// Consortium's own voice.
+///
+/// Announcements — a turn that failed, a hop limit reached — are posted under
+/// this name so they are visible in the room rather than buried in a log. They
+/// must never wake anyone. An error report is not a request, and a router that
+/// cannot tell the difference lets a failing agent talk the room into failing
+/// forever: the failure is announced, the announcement looks like someone
+/// speaking, everyone is woken, and the failure happens again.
+pub const SYSTEM: &str = "system";
+
 #[derive(Debug, PartialEq, Eq)]
 pub enum Decision {
     /// Wake these agents, in this order.
@@ -42,6 +52,13 @@ pub enum Decision {
 /// how many agent-authored messages have run since a human last spoke.
 pub fn route(message: &Envelope, agents: &[String], hops: u32) -> Decision {
     let from = message.from.to_lowercase();
+
+    // Checked before anything else. Consortium is not a participant, and
+    // nothing it says about the room is addressed to the room.
+    if from == SYSTEM {
+        return Decision::Nobody;
+    }
+
     let sender_is_agent = agents.iter().any(|a| *a == from);
 
     // Only agent-to-agent traffic is bounded. A human speaking always gets
@@ -145,6 +162,18 @@ mod tests {
         let to = names(&["codex"]);
         let m = msg("Claude", &to);
         assert_eq!(route(&m, &agents(), 0), Decision::Wake(names(&["codex"])));
+    }
+
+    #[test]
+    fn consortium_announcing_a_failure_wakes_nobody() {
+        // The loop this exists to prevent, which cost a live room a flood of
+        // identical errors: a failed turn is announced, the announcement is
+        // read as somebody speaking, everyone is woken, and it fails again.
+        // Note it wakes nobody even when it names an agent — an error report
+        // that mentions Codex is about Codex, not addressed to it.
+        let to = names(&["codex"]);
+        assert_eq!(route(&msg("system", &to), &agents(), 0), Decision::Nobody);
+        assert_eq!(route(&msg("system", &[]), &agents(), 0), Decision::Nobody);
     }
 
     #[test]

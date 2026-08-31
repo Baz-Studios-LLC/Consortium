@@ -56,11 +56,16 @@ impl AgentManager {
         let names: Vec<String> = adapters.iter().map(|a| a.name().to_lowercase()).collect();
         let mut queues = HashMap::new();
 
+        // Failures already reported, as "agent: reason". A rate limit does not
+        // clear because someone sent another message, so repeating it for every
+        // message says nothing new and buries the room.
+        let announced: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
         let held = adapters.clone();
 
         for adapter in adapters {
             let (tx, rx) = channel::<WakeRequest>();
             let name = adapter.name().to_lowercase();
+            let announced = Arc::clone(&announced);
 
             std::thread::spawn(move || {
                 // One turn at a time, by construction rather than by a lock
@@ -82,14 +87,24 @@ impl AgentManager {
                             bus::log(&format!("wake: {} had nothing to say", request.agent));
                         }
                         Err(e) => {
-                            // Said out loud. A turn that failed silently looks
-                            // exactly like an agent choosing not to answer, and
-                            // the room would wait on it forever.
+                            // Always logged: every attempt is worth a line.
                             bus::log(&format!("wake: {} failed: {e}", request.agent));
-                            bus::post(
-                                "system",
-                                &format!("{} could not answer: {e}", request.agent),
-                            );
+
+                            // Said out loud once. A turn that fails silently
+                            // looks exactly like an agent choosing not to
+                            // answer and the room waits on it forever — but
+                            // the same failure repeated for every message is
+                            // its own kind of useless.
+                            let first = announced
+                                .lock()
+                                .unwrap()
+                                .insert(format!("{}: {e}", request.agent));
+                            if first {
+                                bus::post(
+                                    router::SYSTEM,
+                                    &format!("{} could not answer: {e}", request.agent),
+                                );
+                            }
                         }
                     }
                 }
@@ -167,7 +182,7 @@ impl AgentManager {
                     // indistinguishable from being broken, and the person who
                     // can restart the conversation needs to know it stopped.
                     bus::post(
-                        "system",
+                        router::SYSTEM,
                         &format!(
                             "Automatic agent replies paused after {count} exchanges without anyone else speaking. \
                              Say something to resume."
@@ -197,6 +212,23 @@ impl AgentManager {
             return;
         };
 
+        // An agent that is already broken is not woken. Its failure was
+        // announced when it happened; waking it to fail again in exactly the
+        // same way adds nothing and costs a turn. It comes back when it is
+        // restarted, which is a deliberate act rather than a side effect of
+        // someone speaking.
+        if let Some(adapter) = self
+            .adapters
+            .iter()
+            .find(|a| a.name().to_lowercase() == agent)
+        {
+            let state = adapter.state();
+            if matches!(state, AgentState::Error(_) | AgentState::Offline) {
+                bus::log(&format!("manager: not waking {agent}, it is {state}"));
+                return;
+            }
+        }
+
         let start = index.saturating_sub(CONTEXT_LINES);
         let context = lines[start..index]
             .iter()
@@ -223,6 +255,19 @@ impl AgentManager {
             // said than silently dropped.
             bus::log(&format!("manager: {agent}'s worker is not running"));
         }
+    }
+
+    /// Forgets where it had got to, for a room that has been emptied.
+    ///
+    /// Both halves matter. The high-water mark is an index into a file that no
+    /// longer has that many lines, so leaving it would silently stop every
+    /// future wake — the room would look alive and answer nothing. And `seen`
+    /// is keyed by index, so the new message 0 would be mistaken for the old
+    /// one and suppressed.
+    pub fn reset(&self) {
+        *self.high_water.lock().unwrap() = 0;
+        self.seen.lock().unwrap().clear();
+        bus::log("manager: room cleared, watching from the top");
     }
 
     /// What each agent is actually doing, asked of the adapters.

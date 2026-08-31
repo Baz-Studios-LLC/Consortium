@@ -28,6 +28,36 @@ pub fn log_path() -> PathBuf {
     dir.join("messages.jsonl")
 }
 
+/// Empties the room, keeping what was in it.
+///
+/// The file is moved aside rather than deleted. A room full of noise is worth
+/// clearing; the record of how it got that way is worth keeping, and a button
+/// that destroys history on a single click is a button people are right to be
+/// afraid of. Archives are numbered rather than timestamped so clearing twice
+/// in a second cannot overwrite the first.
+pub fn archive() -> Result<PathBuf, String> {
+    let path = log_path();
+    if !path.exists() {
+        return Err("there is nothing to clear".into());
+    }
+
+    let dir = workspace().join(".consortium").join("archive");
+    fs::create_dir_all(&dir).map_err(|e| format!("could not make an archive: {e}"))?;
+
+    let mut n = 1;
+    let dest = loop {
+        let candidate = dir.join(format!("messages-{n}.jsonl"));
+        if !candidate.exists() {
+            break candidate;
+        }
+        n += 1;
+    };
+
+    fs::rename(&path, &dest).map_err(|e| format!("could not archive the room: {e}"))?;
+    log(&format!("room cleared, archived to {}", dest.display()));
+    Ok(dest)
+}
+
 /// Where diagnostics go so a human can read them.
 ///
 /// Beside the log the room already uses, in the directory the app already owns
