@@ -44,7 +44,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://raw.githubusercontent.com/Baz-Studios-LLC/Consortium/main/updater.json"
+        "https://github.com/Baz-Studios-LLC/Consortium/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEFCOEI1RDk5QUFEQkMzOEYKUldTUHc5dXFtVjJMcTB2bGpKdVlXQ0xLVzA4alRYODlteWlZYlIvZy8yazhVaEZIbXp0MkFlWWYK"
     }

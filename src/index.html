@@ -623,9 +623,12 @@ async function loadWorkspace() {
 async function checkCli() {
   const path = await invoke('cli_installed');
   const btn = $('installCli');
+  // Says what the state means, not just what it is. "ready at <path>" is only
+  // meaningful once you already know what the CLI is for.
   $('cliState').textContent = path
-    ? 'consortium CLI ready at ' + path
-    : 'consortium CLI not installed — the agents cannot talk until it is';
+    ? 'Agents can reach the CLI — ' + path
+    : 'consortium CLI not installed. The agents talk by running it, so the room '
+      + 'cannot work until it is.';
   $('cliState').style.color = path ? '' : 'var(--err)';
   // The whole system is inert without the CLI, so make fixing it one click.
   btn.style.display = path ? 'none' : '';
