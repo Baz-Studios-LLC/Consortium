@@ -36,6 +36,10 @@ consortium — a local message bus between coding agents
 Set CONSORTIUM_HOME to use a workspace other than the default.";
 
 fn main() {
+    // Before anything reads or writes: a room that predates conversations
+    // has to be moved into one, and the CLI often runs before the window does.
+    bus::migrate();
+
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cmd = args.first().map(|s| s.as_str()).unwrap_or("");
 

@@ -201,6 +201,31 @@
     font-weight: 500; padding: 6px 11px; border-radius: 7px; font-size: 11.5px;
   }
   button:disabled { opacity: .4; cursor: not-allowed; }
+  button.mini {
+    background: none; border: none; color: var(--muted); font-size: 13px;
+    padding: 0 4px; line-height: 1; cursor: pointer;
+  }
+  button.mini:hover { color: var(--text); }
+  button.ghost.wide { width: 100%; margin-top: 5px; }
+  .conv {
+    display: flex; align-items: baseline; gap: 6px; padding: 4px 7px;
+    border-radius: 6px; cursor: pointer; font-size: 11.5px;
+  }
+  .conv:hover { background: var(--panel-2); }
+  .conv.on { background: var(--panel-2); font-weight: 600; }
+  /* The folder is the load-bearing detail, not decoration: it decides where
+     agents work and which sessions can be attached. */
+  .conv .where {
+    color: var(--muted); font-size: 10px; margin-left: auto;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 96px;
+  }
+  .newconv { display: grid; gap: 5px; padding: 6px 2px; }
+  .newconv input, #sessionPick {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    border-radius: 6px; padding: 5px 7px; font-size: 11px; font-family: inherit;
+    width: 100%; box-sizing: border-box;
+  }
+  .newconv-row { display: flex; gap: 5px; }
   /* Armed, not alarming: the second click empties the room, and the messages
      are archived rather than destroyed, so this warns without shouting. */
   button.ghost.armed { border-color: var(--warn, #d08770); color: var(--warn, #d08770); }
@@ -252,6 +277,22 @@
 <main>
   <aside>
     <div>
+      <div class="sec-title">Rooms <button class="mini" id="newConvBtn" title="New room">+</button></div>
+      <div id="conversations"></div>
+      <div class="newconv" id="newConv" hidden>
+        <input id="convName" placeholder="Name, e.g. BazMail">
+        <input id="convDir" placeholder="Project folder (optional)">
+        <div class="newconv-row">
+          <button class="ghost" id="convCreate">Create</button>
+          <button class="ghost" id="convCancel">Cancel</button>
+        </div>
+      </div>
+
+      <div class="sec-title">Claude session</div>
+      <select id="sessionPick"></select>
+      <button class="ghost wide" id="attachBtn">Continue this session</button>
+      <div class="hint" id="sessionHint"></div>
+
       <div class="sec-title">Agents</div>
       <div id="agents"></div>
       <div class="sec-title">Shared workspace</div>
@@ -305,6 +346,9 @@ let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
 let presence = {};          // name -> {state, age_secs}
 let managed = {};           // lowercased name -> {state, detail}, agents we run
+let rooms = [];             // every conversation
+let activeRoom = 'general';
+let claudeSessions = [];    // sessions on this machine, newest first
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -367,6 +411,10 @@ $('sidebarBtn').onclick = () => {
 // flash open on every launch.
 applyRail(localStorage.getItem(RAIL_KEY) === 'true');
 
+// Rooms first: the transcript and the session picker both depend on knowing
+// which room is showing.
+loadRooms().then(loadSessions);
+
 // Shown because updates now apply on their own. Without it, "which version are
 // you on" is a question the window cannot answer.
 invoke('app_version')
@@ -394,6 +442,119 @@ async function send() {
   catch (e) { console.error(e); }
   pollBus();
 }
+
+// ---------- rooms ----------
+// A room owns its transcript, its agents' memory and its folder, so switching
+// one is closer to opening a different project than to filtering a list.
+async function loadRooms() {
+  try {
+    rooms = await invoke('conversations');
+    activeRoom = await invoke('conversation_active');
+  } catch (_) { return; }
+  renderRooms();
+  renderSessionPicker();
+}
+
+function renderRooms() {
+  const box = $('conversations');
+  box.innerHTML = '';
+  for (const r of rooms) {
+    const el = document.createElement('div');
+    el.className = 'conv' + (r.slug === activeRoom ? ' on' : '');
+    el.innerHTML = '<span class="nm"></span><span class="where"></span>';
+    el.querySelector('.nm').textContent = r.name;
+    el.querySelector('.where').textContent = r.dir ? shortDir(r.dir) : '';
+    el.title = r.dir
+      ? r.name + ' — agents woken here work in ' + r.dir
+      : r.name + ' — agents woken here work in the shared workspace';
+    el.onclick = () => selectRoom(r.slug);
+    box.appendChild(el);
+  }
+}
+
+const shortDir = (d) => String(d).split(/[\\/]/).filter(Boolean).slice(-1)[0] || d;
+
+async function selectRoom(slug) {
+  if (slug === activeRoom) return;
+  try { await invoke('conversation_select', { slug }); }
+  catch (e) { $('status').textContent = String(e); return; }
+  activeRoom = slug;
+  // The transcript on screen belongs to the room being left, so it goes
+  // rather than being appended to.
+  $('log').innerHTML = ''; shown = 0; seenFrom = new Set();
+  renderRooms(); renderSessionPicker();
+  pollBus(); pollPresence();
+}
+
+$('newConvBtn').onclick = () => {
+  $('newConv').hidden = !$('newConv').hidden;
+  if (!$('newConv').hidden) $('convName').focus();
+};
+$('convCancel').onclick = () => {
+  $('newConv').hidden = true;
+  $('convName').value = ''; $('convDir').value = '';
+};
+$('convCreate').onclick = async () => {
+  const name = $('convName').value.trim();
+  if (!name) { $('convName').focus(); return; }
+  try {
+    const made = await invoke('conversation_create', { name, dir: $('convDir').value.trim() || null });
+    $('convCancel').onclick();
+    await loadRooms();
+    selectRoom(made.slug);
+  } catch (e) { $('status').textContent = String(e); }
+};
+
+// ---------- sessions ----------
+// Only sessions held in this room's folder are offered. Claude Code resolves
+// a session relative to the working directory, so any other one would be
+// accepted here and fail on the first wake with 'No conversation found'.
+async function loadSessions() {
+  try { claudeSessions = await invoke('claude_sessions'); }
+  catch (_) { claudeSessions = []; }
+  renderSessionPicker();
+}
+
+const sameDir = (a, b) =>
+  String(a || '').replace(/[\\/]+$/, '').toLowerCase() ===
+  String(b || '').replace(/[\\/]+$/, '').toLowerCase();
+
+function renderSessionPicker() {
+  const pick = $('sessionPick');
+  const room = rooms.find(r => r.slug === activeRoom);
+  const dir = (room && room.dir) || null;
+  const usable = dir ? claudeSessions.filter(s => sameDir(s.dir, dir)) : [];
+
+  pick.innerHTML = '';
+  for (const s of usable) {
+    const o = document.createElement('option');
+    o.value = s.id;
+    o.textContent = s.title + ' · ' + agoOf(s.age_secs);
+    pick.appendChild(o);
+  }
+
+  const attached = room && room.sessions && room.sessions.claude;
+  pick.disabled = !usable.length;
+  $('attachBtn').disabled = !usable.length;
+  $('sessionHint').textContent =
+    attached      ? 'Continuing an existing session.'
+    : !dir        ? 'Give this room a project folder to continue an existing session.'
+    : !usable.length ? 'No Claude sessions in this folder yet. A new one starts on first use.'
+                    : 'Or leave it: this room has its own session already.';
+}
+
+$('attachBtn').onclick = async () => {
+  const id = $('sessionPick').value;
+  const chosen = claudeSessions.find(s => s.id === id);
+  if (!chosen) return;
+  try {
+    await invoke('conversation_attach', {
+      slug: activeRoom, agent: 'claude', session: id, sessionDir: chosen.dir
+    });
+    $('status').textContent = 'This room now continues "' + chosen.title + '".';
+    await loadRooms();
+  } catch (e) { $('status').textContent = String(e); }
+};
 
 // ---------- participants ----------
 function renderParticipants() {
@@ -730,7 +891,7 @@ $('briefClose').onclick = () => $('scrim').classList.remove('open');
 $('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
 $('revealBtn').onclick = () => invoke('reveal_workspace');
 $('refreshBtn').onclick = () => {
-  loadWorkspace(); pollBus(); pollPresence(); checkCli();
+  loadWorkspace(); pollBus(); pollPresence(); checkCli(); loadRooms(); loadSessions();
 };
 
 // Two clicks rather than a dialog. The first says what is about to happen,

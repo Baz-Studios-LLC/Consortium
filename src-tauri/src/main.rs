@@ -688,6 +688,9 @@ fn start_agents() -> Option<std::sync::Arc<manager::AgentManager>> {
 
 fn main() {
     let workspace = bus::workspace();
+    // Before the manager takes its high-water marks, so a migrated room is
+    // marked at its end rather than replayed from the top.
+    bus::migrate();
     let _ = std::fs::create_dir_all(&workspace);
 
     // Every run starts with what it is and where, so a log entry can be tied to

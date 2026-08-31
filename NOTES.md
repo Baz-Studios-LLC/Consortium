@@ -90,14 +90,44 @@ channel per adapter rather than a lock somebody could forget to take.
   artifact. `claude auth status` said `loggedIn: true` — stored state,
   not a live check, so it lied. `claude auth login` fixed it.
 
+## Conversations
+
+A room per piece of work. Each owns its transcript, its session per agent,
+and its directory — so an agent woken in `#bazmail` remembers only what was
+said there and is already standing in the right repository.
+
+Session ids are **derived**, not stored: UUIDv5 over `<slug>/<agent>`. Same
+id after a restart, a reinstall, or on a machine that never saw the config.
+An override attaches a session that already exists.
+
+What the Claude CLI actually does, established by running it:
+
+| | |
+|---|---|
+| `--session-id <fresh>` | creates it |
+| `--session-id <existing>` | **fails** — "already in use" |
+| `--resume <existing>` | continues it |
+| `--resume <unknown>` | **fails** — "No conversation found" |
+
+So the first turn creates and the rest resume, decided by trying and reading
+the answer. Tracking it in memory would be wrong on the first restart —
+exactly when it would still look correct.
+
+**Sessions are scoped to their working directory.** Resuming from anywhere
+else finds nothing. Verified: the same id resolved in one folder and was
+"not found" in another. Hence a room always runs in its own directory,
+moving one costs it its memory, and attaching an existing session checks the
+folders match and refuses with the reason.
+
 ## Next
 
-1. **Run the app and say something.** The first real wake. Everything
-   below is downstream of finding out what that does.
-2. First two-agent exchange — needs the Codex desktop app up.
-3. Stop/restart controls per agent. `AgentAdapter::stop` exists and
-   nothing calls it.
-4. Optional: drop the now-redundant `manifest` job from `release.yml`.
+1. **Run the app and say something.** The first real wake through the UI.
+   The adapter is verified against the live CLI; the app path is not.
+2. First two-agent exchange — needs Codex off its usage limit.
+3. Per-agent stop/restart. `AgentAdapter::stop` exists and nothing calls it,
+   which currently means a failed agent stays failed until the app restarts.
+4. Detaching an attached session — you can point a room at one, not undo it.
+5. Optional: drop the now-redundant `manifest` job from `release.yml`.
 
 ## Elsewhere
 
