@@ -1,0 +1,16 @@
+{
+  "name": "consortium",
+  "productName": "Consortium",
+  "version": "0.1.0",
+  "private": true,
+  "description": "An in-house development studio that drives coding-agent CLIs against a shared workspace.",
+  "author": "Brett Bazaar",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

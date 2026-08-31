@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#212938"/>
+      <stop offset="1" stop-color="#0d0f14"/>
+    </linearGradient>
+  </defs>
+
+  <!-- macOS-proportioned squircle -->
+  <rect width="1024" height="1024" rx="228" fill="url(#bg)"/>
+
+  <!-- two agents converging on the shared workspace.
+       Tips stop well short of the centre bar so the three marks stay
+       distinct down at 32px, where they otherwise blur into one blob. -->
+  <path d="M226 296 L366 512 L226 728" fill="none" stroke="#d97757"
+        stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M798 296 L658 512 L798 728" fill="none" stroke="#10a37f"
+        stroke-width="80" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- the shared workspace they both write into -->
+  <rect x="470" y="326" width="84" height="372" rx="42" fill="#eef1f7"/>
+</svg>

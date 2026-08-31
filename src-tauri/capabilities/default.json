@@ -1,0 +1,14 @@
+{
+  "identifier": "default",
+  "description": "The studio window drives its own chrome. Agent processes are spawned in Rust, never from the webview, so no shell capability is granted to the frontend.",
+  "windows": [
+    "main"
+  ],
+  "permissions": [
+    "core:default",
+    "core:window:allow-minimize",
+    "core:window:allow-close",
+    "core:window:allow-start-dragging",
+    "updater:default"
+  ]
+}

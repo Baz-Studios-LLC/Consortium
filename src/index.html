@@ -1,0 +1,600 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Consortium</title>
+<style>
+  :root {
+    --bg: #0d0f14;
+    --panel: #141821;
+    --panel-2: #1a1f2b;
+    --line: #242c3a;
+    --text: #e6e9f0;
+    --muted: #8b94a7;
+    --accent: #6ea8fe;
+    --claude: #d97757;
+    --codex: #10a37f;
+    --err: #f2777a;
+    --ok: #7ec699;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    display: grid; grid-template-rows: auto 1fr auto; overflow: hidden;
+  }
+
+  /* ---- header ---- */
+  header {
+    display: flex; align-items: center; gap: 14px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line);
+    background: var(--panel); -webkit-app-region: drag;
+  }
+  header .brand { font-weight: 650; letter-spacing: .2px; }
+  header .ws {
+    margin-left: auto; display: flex; align-items: center; gap: 8px;
+    -webkit-app-region: no-drag;
+  }
+  .ws-path {
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    background: var(--panel-2); border: 1px solid var(--line);
+    padding: 4px 9px; border-radius: 6px; max-width: 46ch;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  /* ---- main ---- */
+  main { display: grid; grid-template-columns: 260px 1fr; min-height: 0; }
+  aside {
+    border-right: 1px solid var(--line); background: var(--panel);
+    display: grid; grid-template-rows: auto 1fr; min-height: 0;
+  }
+  .sec-title {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .09em;
+    color: var(--muted); padding: 15px 18px 8px;
+  }
+  .agent {
+    display: flex; align-items: center; gap: 9px; margin: 0 8px 6px;
+    padding: 9px 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid transparent;
+  }
+  .agent:hover { background: var(--panel-2); }
+  .agent.sel { background: var(--panel-2); border-color: var(--line); }
+  .agent.off { opacity: .45; cursor: not-allowed; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+  .dot.claude { background: var(--claude); }
+  .dot.codex { background: var(--codex); }
+  .dot.off { background: var(--muted); }
+  .agent { overflow: hidden; }
+  .agent .meta { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+  .agent .nm { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent .vr {
+    font-family: var(--mono); font-size: 10px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .agent .spin { margin-left: auto; font-size: 10px; color: var(--accent); }
+  .role {
+    font-size: 8.5px; letter-spacing: .08em; text-transform: uppercase;
+    padding: 2px 6px; border-radius: 4px; border: 1px solid var(--line);
+    color: var(--muted); flex: none; white-space: nowrap;
+  }
+  .role.primary { color: var(--accent); border-color: #33507e; background: #17213a; }
+
+  /* briefing modal */
+  .scrim {
+    position: fixed; inset: 0; background: #000a; display: none;
+    align-items: center; justify-content: center; z-index: 20;
+  }
+  .scrim.open { display: flex; }
+  .modal {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 12px;
+    width: min(760px, 88vw); max-height: 82vh; overflow-y: auto; padding: 18px 20px;
+  }
+  .modal h2 { margin: 0 0 4px; font-size: 15px; }
+  .modal .sub { color: var(--muted); font-size: 11.5px; margin-bottom: 14px; }
+  .brief-block { margin-bottom: 16px; }
+  .brief-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .brief-head .nm { font-weight: 600; font-size: 12.5px; }
+  .brief-block textarea {
+    width: 100%; min-height: 150px; font-family: var(--mono); font-size: 11.5px;
+    background: var(--bg); color: var(--text); border: 1px solid var(--line);
+    border-radius: 8px; padding: 10px; resize: vertical;
+  }
+
+  .files { overflow-y: auto; padding-bottom: 12px; min-height: 0; }
+  .file {
+    display: flex; gap: 8px; align-items: center;
+    padding: 5px 18px; font-family: var(--mono); font-size: 11px;
+  }
+  .file .sz { margin-left: auto; color: var(--muted); font-size: 10px; }
+  .empty { color: var(--muted); padding: 6px 18px; font-size: 11.5px; font-style: italic; }
+
+  /* ---- transcript ---- */
+  #log { overflow-y: auto; padding: 18px 22px; min-height: 0; }
+  .turn { margin-bottom: 16px; max-width: 900px; }
+  .turn .who {
+    font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em;
+    color: var(--muted); margin-bottom: 5px;
+  }
+  .turn .body {
+    white-space: pre-wrap; word-break: break-word;
+    border-left: 2px solid var(--line); padding-left: 12px;
+  }
+  .turn.you .body { border-left-color: var(--accent); }
+  .turn.claude .body { border-left-color: var(--claude); }
+  .turn.codex .body { border-left-color: var(--codex); }
+  .turn.sys .body, .turn.err .body {
+    font-family: var(--mono); font-size: 11.5px; color: var(--muted);
+  }
+  .turn.err .body { color: var(--err); border-left-color: var(--err); }
+  .tool {
+    display: inline-block; font-family: var(--mono); font-size: 10.5px;
+    color: var(--muted); background: var(--panel-2); border: 1px solid var(--line);
+    padding: 1px 7px; border-radius: 5px; margin: 2px 4px 2px 0;
+  }
+  .result-bar {
+    font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    border-top: 1px dashed var(--line); padding-top: 6px; margin-top: 8px;
+  }
+
+  /* ---- composer ---- */
+  footer { border-top: 1px solid var(--line); background: var(--panel); padding: 11px 16px; }
+  .row { display: flex; gap: 9px; align-items: stretch; }
+  textarea {
+    flex: 1; resize: none; min-height: 44px; max-height: 190px;
+    background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--line); border-radius: 9px; padding: 11px 13px;
+    font: inherit; outline: none;
+  }
+  textarea:focus { border-color: var(--accent); }
+  button {
+    background: var(--accent); color: #0b1020; border: 0; font: inherit;
+    font-weight: 640; padding: 0 22px; border-radius: 9px; cursor: pointer;
+  }
+  button.ghost {
+    background: var(--panel-2); color: var(--text); border: 1px solid var(--line);
+    font-weight: 500; padding: 6px 11px; border-radius: 7px; font-size: 11.5px;
+  }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  button.stop { background: var(--err); color: #1a0c0c; }
+  .hint { color: var(--muted); font-size: 10.5px; margin-top: 7px; }
+  .pill {
+    display: none; align-items: center; gap: 6px; -webkit-app-region: no-drag;
+    background: #1b3326; color: var(--ok); border: 1px solid #2c5740;
+    font-size: 11px; font-weight: 600; padding: 4px 11px; border-radius: 999px;
+    cursor: pointer; white-space: nowrap;
+  }
+  .pill.show { display: inline-flex; }
+  .pill:hover { background: #21402f; }
+  .pill[disabled] { opacity: .6; cursor: default; }
+  .opts { display: flex; align-items: center; gap: 9px; margin-top: 9px; }
+  .opt-label { color: var(--muted); font-size: 11px; }
+  .seg { display: flex; gap: 4px; }
+  .seg button {
+    background: var(--panel-2); color: var(--muted); border: 1px solid var(--line);
+    font: inherit; font-size: 11.5px; font-weight: 500;
+    padding: 4px 11px; border-radius: 7px; cursor: pointer;
+  }
+  .seg button.on { color: var(--text); border-color: var(--accent); background: #1d2740; }
+  .seg button:disabled { opacity: .35; cursor: not-allowed; }
+</style>
+</head>
+<body>
+
+<header>
+  <span class="brand">Consortium</span>
+  <span class="hint" id="sub">development studio</span>
+  <div class="ws">
+    <button class="pill" id="updatePill"></button>
+    <span class="ws-path" id="wsPath">…</span>
+    <button class="ghost" id="revealBtn">Reveal</button>
+    <button class="ghost" id="briefBtn">Briefing</button>
+    <button class="ghost" id="refreshBtn">Refresh</button>
+  </div>
+</header>
+
+<main>
+  <aside>
+    <div>
+      <div class="sec-title">Agents</div>
+      <div id="agents"></div>
+      <div class="sec-title">Shared workspace</div>
+    </div>
+    <div class="files" id="files"></div>
+  </aside>
+  <div id="log"></div>
+</main>
+
+<footer>
+  <div class="row">
+    <textarea id="prompt" placeholder="Describe the task for the selected agent…  (⌘↵ to run)"></textarea>
+    <button id="runBtn">Send</button>
+    <button id="stopBtn" class="stop" style="display:none">Stop</button>
+  </div>
+  <div class="opts">
+    <span class="opt-label">Send to</span>
+    <div class="seg" id="target"></div>
+  </div>
+  <div class="hint" id="status">Ready.</div>
+</footer>
+
+<div class="scrim" id="scrim">
+  <div class="modal">
+    <h2>Briefing</h2>
+    <div class="sub">
+      What each agent is told at the start of a session. Copy one to paste straight
+      into a Codex or Claude Code session you're driving yourself.
+    </div>
+    <div id="briefBody"></div>
+    <button class="ghost" id="briefClose">Close</button>
+  </div>
+</div>
+
+<script>
+const { invoke } = window.__TAURI__.core;
+const { listen } = window.__TAURI__.event;
+const $ = (id) => document.getElementById(id);
+
+let agents = [];
+let target = null;            // agent id, or 'both'
+let running = null;
+let settle = null;            // resolves when the in-flight run exits
+
+// One shared room. Every participant — you included — appends here, and each
+// agent is fed only what it hasn't seen yet.
+let transcript = [];          // {speaker, name, text}
+let sessions = {};            // agent id -> its CLI session id
+let delivered = {};           // agent id -> transcript entries already sent to it
+let briefed = {};             // agent id -> has had the "who else is here" preamble
+// One agent leads, the other supports. Persisted so it survives a relaunch.
+let primary = localStorage.getItem('primary') || 'claude';
+let openEntry = null;         // transcript entry currently being streamed into
+
+// ---------- transcript ----------
+function render(entry) {
+  const el = document.createElement('div');
+  el.className = 'turn ' + entry.speaker;
+  el.innerHTML = '<div class="who"></div><div class="body"></div>';
+  el.querySelector('.who').textContent = entry.name;
+  el.querySelector('.body').textContent = entry.text;
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+  entry.el = el;
+  return entry;
+}
+
+function addEntry(speaker, name, text) {
+  const entry = { speaker, name, text: text || '' };
+  transcript.push(entry);
+  return render(entry);
+}
+
+function appendText(entry, text) {
+  entry.text += (entry.text ? '\n\n' : '') + text;
+  entry.el.querySelector('.body').textContent = entry.text;
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+function note(cls, who, text) {   // transient — never enters the transcript
+  const el = document.createElement('div');
+  el.className = 'turn ' + cls;
+  el.innerHTML = '<div class="who"></div><div class="body"></div>';
+  el.querySelector('.who').textContent = who;
+  el.querySelector('.body').textContent = text;
+  $('log').appendChild(el);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+
+// ---------- what each agent still needs to hear ----------
+const nameOf = (id) => (agents.find(a => a.id === id) || {}).name || id;
+
+// The session preamble. Role-aware, and explicit about the fact that the app is
+// the wire — otherwise an agent with shell access may try to invoke the other
+// agent's CLI itself, duplicating the relay.
+function briefingFor(agentId) {
+  const isPrimary = agentId === primary;
+  const peerId = (agents.find(a => a.id !== agentId) || {}).id;
+  const peer = peerId ? nameOf(peerId) : 'another agent';
+
+  const role = isPrimary
+    ? 'You are the primary agent on this work, alongside the user and ' + peer +
+      ', who is assisting you. You own the direction and the final call. Hand ' +
+      peer + ' the pieces where a second pair of eyes or parallel work genuinely ' +
+      'helps, and say plainly when you disagree with it.'
+    : 'You are assisting ' + nameOf(primary) + ', who is the primary agent on this ' +
+      'work, alongside the user. Support their direction and take on what they hand ' +
+      'you. Push back when you think they are wrong — you are a colleague, not a ' +
+      'rubber stamp — but they own the final call.';
+
+  const how =
+    'How to talk to them: just write. Consortium relays messages between all of ' +
+    'you, so your reply is delivered automatically and theirs come back to you as ' +
+    'messages labelled with their name. There is no command to run and nothing to ' +
+    'connect — do NOT try to launch ' + peer + " or invoke its CLI yourself, and do " +
+    'not shell out to another agent. Address people by name when you want ' +
+    'something specific from them.';
+
+  const files =
+    'You all share one working directory. A message is the right size for ' +
+    'discussion; for anything larger — code, drafts, data, images — write it to a ' +
+    'file in that directory and say which file you wrote, and the others can read ' +
+    'it directly.';
+
+  return role + '\n\n' + how + '\n\n' + files;
+}
+
+function buildPrompt(agentId) {
+  const pending = transcript
+    .slice(delivered[agentId] || 0)
+    .filter(e => e.speaker !== agentId);   // it already said its own lines
+  delivered[agentId] = transcript.length;
+
+  if (!pending.length) return null;
+
+  const lines = pending.map(e => e.name + ': ' + e.text).join('\n\n');
+  if (briefed[agentId]) return lines;
+
+  briefed[agentId] = true;
+  return briefingFor(agentId) + '\n\n' + lines;
+}
+
+// ---------- running ----------
+function runAgent(agentId) {
+  const prompt = buildPrompt(agentId);
+  if (!prompt) return Promise.resolve();
+
+  running = agentId;
+  openEntry = null;
+  $('spin-' + agentId).textContent = '●';
+  $('status').textContent = (agents.find(a => a.id === agentId) || {}).name + ' thinking…';
+  updateControls();
+
+  return new Promise((resolve) => {
+    settle = resolve;
+    invoke('run_agent', {
+      req: { agent: agentId, prompt, sessionId: sessions[agentId] || null }
+    }).catch((e) => {
+      note('err', 'Error', String(e));
+      endRun();
+    });
+  });
+}
+
+function endRun() {
+  if (running) $('spin-' + running).textContent = '';
+  running = null;
+  openEntry = null;
+  updateControls();
+  loadWorkspace();
+  const done = settle; settle = null;
+  if (done) done();
+}
+
+async function send() {
+  if (running) return;
+  const text = $('prompt').value.trim();
+  if (text) addEntry('you', 'You', text);
+  $('prompt').value = '';
+
+  const installed = agents.filter(a => a.installed).map(a => a.id);
+  // Primary speaks first so the assistant can react to its lead.
+  const order = target === 'both'
+    ? installed.slice().sort((a, b) => (a === primary ? -1 : b === primary ? 1 : 0))
+    : [target];
+
+  // Sequential on purpose: the second agent should see the first one's reply.
+  for (const id of order) {
+    if (!installed.includes(id)) continue;
+    await runAgent(id);
+  }
+  $('status').textContent = 'Ready.';
+}
+
+listen('agent-event', ({ payload: e }) => {
+  const name = (agents.find(a => a.id === e.agent) || {}).name || e.agent;
+  if (e.session_id) sessions[e.agent] = e.session_id;
+
+  switch (e.kind) {
+    case 'text':
+      if (openEntry) appendText(openEntry, e.text);
+      else openEntry = addEntry(e.agent, name, e.text);
+      break;
+    case 'tool': {
+      if (!openEntry) openEntry = addEntry(e.agent, name, '');
+      const chip = document.createElement('span');
+      chip.className = 'tool';
+      chip.textContent = e.text;
+      openEntry.el.querySelector('.body').appendChild(chip);
+      break;
+    }
+    case 'result': {
+      const detail = e.detail ? ' · ' + e.detail : '';
+      if (e.is_error) note('err', name, e.text || 'failed');
+      else if (openEntry) {
+        const bar = document.createElement('div');
+        bar.className = 'result-bar';
+        bar.textContent = 'done' + detail;
+        openEntry.el.appendChild(bar);
+      }
+      break;
+    }
+    case 'stderr':
+      note('err', name + ' (stderr)', e.text);
+      break;
+    case 'exit':
+      endRun();
+      break;
+  }
+});
+
+// ---------- agents ----------
+async function loadAgents() {
+  agents = await invoke('detect_agents');
+  const box = $('agents');
+  box.innerHTML = '';
+  for (const a of agents) {
+    const el = document.createElement('div');
+    el.className = 'agent' + (a.installed ? '' : ' off');
+    const isPrimary = a.id === primary;
+    el.innerHTML =
+      '<span class="dot ' + (a.installed ? a.id : 'off') + '"></span>' +
+      '<span class="meta"><div class="nm"></div><div class="vr"></div></span>' +
+      '<span class="role' + (isPrimary ? ' primary' : '') + '"></span>' +
+      '<span class="spin" id="spin-' + a.id + '"></span>';
+    el.querySelector('.nm').textContent = a.name;
+    el.querySelector('.vr').textContent = a.installed ? (a.version || 'installed') : 'not installed';
+    el.querySelector('.role').textContent = isPrimary ? 'primary' : 'alt';
+    el.title = a.installed
+      ? a.path + (isPrimary ? '' : ' — click to make primary')
+      : a.install_hint;
+    if (a.installed && !isPrimary) {
+      el.onclick = () => {
+        primary = a.id;
+        localStorage.setItem('primary', primary);
+        // Roles only take effect at the start of a session, so start fresh ones.
+        briefed = {};
+        loadAgents();
+      };
+    }
+    box.appendChild(el);
+  }
+  buildTargets();
+}
+
+function buildTargets() {
+  const installed = agents.filter(a => a.installed);
+  if (!target || (target !== 'both' && !installed.some(a => a.id === target))) {
+    target = installed.length ? installed[0].id : null;
+  }
+  const box = $('target');
+  box.innerHTML = '';
+  const opts = installed.map(a => ({ id: a.id, label: a.name }));
+  if (installed.length >= 2) opts.push({ id: 'both', label: 'Both' });
+  for (const o of opts) {
+    const b = document.createElement('button');
+    b.textContent = o.label;
+    b.className = target === o.id ? 'on' : '';
+    b.onclick = () => { target = o.id; buildTargets(); };
+    box.appendChild(b);
+  }
+  updateControls();
+}
+
+function updateControls() {
+  $('runBtn').disabled = !target || !!running;
+  $('runBtn').style.display = running ? 'none' : '';
+  $('stopBtn').style.display = running ? '' : 'none';
+}
+
+// ---------- workspace ----------
+async function loadWorkspace() {
+  $('wsPath').textContent = await invoke('get_workspace');
+  const files = await invoke('list_workspace_files');
+  const box = $('files');
+  box.innerHTML = '';
+  if (!files.length) {
+    box.innerHTML = '<div class="empty">Empty — files agents create land here.</div>';
+    return;
+  }
+  for (const f of files) {
+    const el = document.createElement('div');
+    el.className = 'file';
+    el.innerHTML = '<span></span><span class="sz"></span>';
+    el.children[0].textContent = (f.is_dir ? '▸ ' : '  ') + f.name;
+    el.children[1].textContent = f.is_dir ? '' : fmtSize(f.size);
+    box.appendChild(el);
+  }
+}
+
+const fmtSize = (n) =>
+  n < 1024 ? n + ' B' :
+  n < 1048576 ? (n / 1024).toFixed(1) + ' KB' :
+  (n / 1048576).toFixed(1) + ' MB';
+
+// ---------- wiring ----------
+$('runBtn').onclick = send;
+$('stopBtn').onclick = async () => {
+  if (running) { await invoke('cancel_agent', { agent: running }); endRun(); }
+};
+function openBriefing() {
+  const box = $('briefBody');
+  box.innerHTML = '';
+  for (const a of agents.filter(x => x.installed)) {
+    const block = document.createElement('div');
+    block.className = 'brief-block';
+    block.innerHTML =
+      '<div class="brief-head">' +
+        '<span class="dot ' + a.id + '"></span>' +
+        '<span class="nm"></span>' +
+        '<span class="role' + (a.id === primary ? ' primary' : '') + '"></span>' +
+        '<button class="ghost copy" style="margin-left:auto">Copy</button>' +
+      '</div><textarea spellcheck="false"></textarea>';
+    block.querySelector('.nm').textContent = a.name;
+    block.querySelector('.role').textContent = a.id === primary ? 'primary' : 'alt';
+    const ta = block.querySelector('textarea');
+    ta.value = briefingFor(a.id);
+    const btn = block.querySelector('.copy');
+    btn.onclick = async () => {
+      await navigator.clipboard.writeText(ta.value);
+      btn.textContent = 'Copied';
+      setTimeout(() => { btn.textContent = 'Copy'; }, 1400);
+    };
+    box.appendChild(block);
+  }
+  $('scrim').classList.add('open');
+}
+
+$('briefBtn').onclick = openBriefing;
+$('briefClose').onclick = () => $('scrim').classList.remove('open');
+$('scrim').onclick = (e) => { if (e.target === $('scrim')) $('scrim').classList.remove('open'); };
+$('revealBtn').onclick = () => invoke('reveal_workspace');
+$('refreshBtn').onclick = () => { loadAgents(); loadWorkspace(); };
+$('prompt').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); send(); }
+});
+
+// ---------- self-update ----------
+let pendingUpdate = null;
+
+async function checkUpdate() {
+  try {
+    const version = await invoke('update_check');
+    pendingUpdate = version;
+    const pill = $('updatePill');
+    if (version) {
+      pill.textContent = 'Update to ' + version;
+      pill.classList.add('show');
+    } else {
+      pill.classList.remove('show');
+    }
+  } catch (_) {
+    // Offline or the manifest isn't reachable — stay quiet and try again later.
+  }
+}
+
+$('updatePill').onclick = async () => {
+  if (!pendingUpdate) return;
+  const pill = $('updatePill');
+  pill.disabled = true;
+  pill.textContent = 'Updating…';
+  try {
+    // Restarts into the new build on success, so nothing after this runs.
+    await invoke('update_install');
+  } catch (e) {
+    pill.disabled = false;
+    pill.textContent = 'Update failed — retry';
+    note('err', 'Update', String(e));
+  }
+};
+
+loadAgents();
+loadWorkspace();
+setInterval(loadWorkspace, 4000);        // agents write files behind our back
+
+checkUpdate();
+setInterval(checkUpdate, 30 * 60 * 1000); // light polling — twice an hour is plenty
+</script>
+</body>
+</html>
