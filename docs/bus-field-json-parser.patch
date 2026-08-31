@@ -1,0 +1,183 @@
+diff --git a/src-tauri/src/bus.rs b/src-tauri/src/bus.rs
+index c43528b..8430a73 100644
+--- a/src-tauri/src/bus.rs
++++ b/src-tauri/src/bus.rs
+@@ -57,35 +57,161 @@ pub fn escape(s: &str) -> String {
+     out
+ }
+ 
+-/// Minimal reader for the two fields we write. Avoids a serde dependency so this
+-/// binary stays tiny and quick for an agent to shell out to.
++/// Minimal reader for the flat object fields we write. Avoids a serde dependency
++/// so this binary stays tiny and quick for an agent to shell out to, but still
++/// observes JSON string boundaries and escapes.
+ pub fn field(line: &str, key: &str) -> Option<String> {
+-    let pat = format!("\"{}\":\"", key);
+-    let start = line.find(&pat)? + pat.len();
+-    let bytes: Vec<char> = line[start..].chars().collect();
++    let mut rest = line.trim_start().strip_prefix('{')?;
++
++    loop {
++        rest = rest.trim_start();
++        if rest.starts_with('}') {
++            return None;
++        }
++
++        let (found_key, after_key) = parse_json_string(rest)?;
++        rest = after_key.trim_start().strip_prefix(':')?.trim_start();
++
++        if found_key == key {
++            if rest.starts_with('"') {
++                let (value, _) = parse_json_string(rest)?;
++                return Some(value);
++            }
++
++            let end = rest
++                .char_indices()
++                .find(|(_, c)| matches!(c, ',' | '}'))
++                .map(|(i, _)| i)
++                .unwrap_or(rest.len());
++            return Some(rest[..end].trim().to_string());
++        }
++
++        rest = skip_json_value(rest)?.trim_start();
++        if let Some(after_comma) = rest.strip_prefix(',') {
++            rest = after_comma;
++            continue;
++        }
++        if rest.starts_with('}') {
++            return None;
++        }
++        return None;
++    }
++}
++
++fn skip_json_value(s: &str) -> Option<&str> {
++    let s = s.trim_start();
++    if s.starts_with('"') {
++        let (_, rest) = parse_json_string(s)?;
++        return Some(rest);
++    }
++
++    let end = s
++        .char_indices()
++        .find(|(_, c)| matches!(c, ',' | '}'))
++        .map(|(i, _)| i)
++        .unwrap_or(s.len());
++    Some(&s[end..])
++}
++
++fn parse_json_string(s: &str) -> Option<(String, &str)> {
++    if !s.starts_with('"') {
++        return None;
++    }
++
+     let mut out = String::new();
+-    let mut i = 0;
+-    while i < bytes.len() {
+-        match bytes[i] {
+-            '\\' if i + 1 < bytes.len() => {
+-                match bytes[i + 1] {
++    let mut i = 1;
++    while i < s.len() {
++        let c = s[i..].chars().next()?;
++        let next = i + c.len_utf8();
++        match c {
++            '"' => return Some((out, &s[next..])),
++            '\\' => {
++                let esc = s[next..].chars().next()?;
++                let esc_next = next + esc.len_utf8();
++                match esc {
++                    '"' => out.push('"'),
++                    '\\' => out.push('\\'),
++                    '/' => out.push('/'),
++                    'b' => out.push('\u{0008}'),
++                    'f' => out.push('\u{000c}'),
+                     'n' => out.push('\n'),
+                     'r' => out.push('\r'),
+                     't' => out.push('\t'),
+-                    '"' => out.push('"'),
+-                    '\\' => out.push('\\'),
+-                    other => out.push(other),
++                    'u' => {
++                        let (high, after_high) = read_hex4(s, esc_next)?;
++                        if (0xd800..=0xdbff).contains(&high) {
++                            if !s[after_high..].starts_with("\\u") {
++                                return None;
++                            }
++                            let (low, after_low) = read_hex4(s, after_high + 2)?;
++                            if !(0xdc00..=0xdfff).contains(&low) {
++                                return None;
++                            }
++                            let scalar =
++                                0x10000 + (((high - 0xd800) as u32) << 10) + ((low - 0xdc00) as u32);
++                            out.push(char::from_u32(scalar)?);
++                            i = after_low;
++                            continue;
++                        }
++                        out.push(char::from_u32(high as u32)?);
++                        i = after_high;
++                        continue;
++                    }
++                    _ => return None,
+                 }
+-                i += 2;
++                i = esc_next;
+             }
+-            '"' => break,
++            c if (c as u32) < 0x20 => return None,
+             c => {
+                 out.push(c);
+-                i += 1;
++                i = next;
+             }
+         }
+     }
+-    Some(out)
++    None
++}
++
++fn read_hex4(s: &str, start: usize) -> Option<(u16, usize)> {
++    let end = start.checked_add(4)?;
++    let hex = s.get(start..end)?;
++    if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
++        return None;
++    }
++    Some((u16::from_str_radix(hex, 16).ok()?, end))
++}
++
++#[cfg(test)]
++mod tests {
++    use super::{escape, field};
++
++    #[test]
++    fn field_round_trips_control_escapes() {
++        let text = "a\u{0001}b\u{0008}c\u{000c}d";
++        let line = format!("{{\"from\":\"Alice\",\"text\":\"{}\",\"at\":\"1\"}}", escape(text));
++
++        assert_eq!(field(&line, "text").as_deref(), Some(text));
++    }
++
++    #[test]
++    fn field_ignores_key_patterns_inside_strings() {
++        let from = "sender \"text\":\" fake";
++        let text = "actual \"at\":\" still text";
++        let line = format!(
++            "{{\"from\":\"{}\",\"text\":\"{}\",\"at\":\"1\"}}",
++            escape(from),
++            escape(text)
++        );
++
++        assert_eq!(field(&line, "from").as_deref(), Some(from));
++        assert_eq!(field(&line, "text").as_deref(), Some(text));
++    }
++
++    #[test]
++    fn field_decodes_surrogate_pair_escapes_from_external_json() {
++        let line = r#"{"from":"Alice","text":"\ud83e\uddea","at":"1"}"#;
++
++        assert_eq!(field(line, "text").as_deref(), Some("\u{1f9ea}"));
++    }
+ }
+ 
+ fn now_secs() -> u64 {
