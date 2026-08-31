@@ -39,6 +39,10 @@ pub struct AgentManager {
     /// Highest log index considered. Persisted, so a restart resumes rather
     /// than treating everything written before it as new.
     high_water: Arc<Mutex<usize>>,
+    /// Held so status can be *asked* rather than assumed. Each adapter is
+    /// also owned by its worker thread; the state lives behind the adapter's
+    /// own lock, so both see the same answer.
+    adapters: Vec<Arc<dyn AgentAdapter>>,
 }
 
 impl AgentManager {
@@ -51,6 +55,8 @@ impl AgentManager {
     pub fn start(adapters: Vec<Arc<dyn AgentAdapter>>) -> Self {
         let names: Vec<String> = adapters.iter().map(|a| a.name().to_lowercase()).collect();
         let mut queues = HashMap::new();
+
+        let held = adapters.clone();
 
         for adapter in adapters {
             let (tx, rx) = channel::<WakeRequest>();
@@ -103,6 +109,7 @@ impl AgentManager {
             names,
             seen: Arc::new(Mutex::new(HashSet::new())),
             high_water: Arc::new(Mutex::new(start_at)),
+            adapters: held,
         }
     }
 
@@ -218,10 +225,15 @@ impl AgentManager {
         }
     }
 
+    /// What each agent is actually doing, asked of the adapters.
+    ///
+    /// This used to return Idle for everyone, which meant a crashed agent
+    /// looked exactly like a healthy one and the room had no way to tell.
+    /// A status line that cannot be wrong is not a status line.
     pub fn states(&self) -> Vec<(String, AgentState)> {
-        self.names
+        self.adapters
             .iter()
-            .map(|n| (n.clone(), AgentState::Idle))
+            .map(|a| (a.name().to_string(), a.state()))
             .collect()
     }
 }

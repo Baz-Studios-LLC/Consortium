@@ -24,9 +24,14 @@ message directly.
 | `claude_adapter.rs` | `claude --print --resume` | done, CLI verified |
 | `codex_adapter.rs` | Codex app-server protocol | Codex's work, 4 tests |
 
-All of it compiles and the suite passes. **None of it runs yet** —
-`AppState.agents` is `Some(Arc<AgentManager>)`-shaped and permanently
-`None`, because nothing constructs the manager.
+All of it compiles, the suite passes, and it is **wired**: adapters start on
+a background thread at launch, and the filesystem watcher drives
+`manager.poll()` on every change to the room.
+
+`ClaudeAdapter` is verified against the live CLI — a real turn goes out and
+comes back parsed, with the session id kept (`cargo test -- --ignored`).
+Nothing has yet woken anything *through the app*, and no two agents have
+exchanged a turn.
 
 ## The decisions worth keeping
 
@@ -57,6 +62,11 @@ indistinguishable from a broken system.
 answered a week of backlog the moment it gained the ability to would be
 a disaster in its first second.
 
+**Status is asked, never assumed.** `states()` briefly returned `Idle` for
+everyone, which meant a crashed agent looked exactly like a healthy one. It
+now asks the adapters. A status line that cannot be wrong is not a status
+line.
+
 **Failures are announced, never swallowed.** A turn that fails quietly
 looks exactly like an agent choosing not to answer, and the room waits
 on it forever. This project has already lost an hour to `post` printing
@@ -82,13 +92,11 @@ channel per adapter rather than a lock somebody could forget to take.
 
 ## Next
 
-1. Construct `AgentManager` at startup and call `poll()` from the
-   `workspace-changed` watcher. Everything else is waiting on this.
-2. Status UI — real `AgentState` (Idle/Working/Error) in place of the
-   "away · 3m ago" placeholder. `manager.states()` currently returns
-   `Idle` for everyone; it should ask the adapters.
-3. First live two-agent exchange. Nothing has actually woken anything
-   yet.
+1. **Run the app and say something.** The first real wake. Everything
+   below is downstream of finding out what that does.
+2. First two-agent exchange — needs the Codex desktop app up.
+3. Stop/restart controls per agent. `AgentAdapter::stop` exists and
+   nothing calls it.
 4. Optional: drop the now-redundant `manifest` job from `release.yml`.
 
 ## Elsewhere

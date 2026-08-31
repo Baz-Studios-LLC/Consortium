@@ -185,3 +185,53 @@ impl AgentAdapter for ClaudeAdapter {
         self.state.lock().unwrap().clone()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::agent::ContextLine;
+
+    fn request(body: &str) -> WakeRequest {
+        WakeRequest {
+            agent: "claude".into(),
+            message_index: 0,
+            sender: "Brett".into(),
+            body: body.into(),
+            context: vec![ContextLine { from: "Brett".into(), text: "earlier line".into() }],
+            hops: 0,
+            workspace: std::env::temp_dir().to_string_lossy().into_owned(),
+        }
+    }
+
+    #[test]
+    fn the_prompt_hands_over_the_room_rather_than_a_pointer_to_it() {
+        // The whole reason to push instead of poll: an agent told only to go
+        // and look spends a round of tool calls learning what the sender
+        // already knew and could simply have said.
+        let p = ClaudeAdapter::new().prompt(&request("please look at the parser"));
+        assert!(p.contains("please look at the parser"), "the message itself");
+        assert!(p.contains("Brett"), "who is asking");
+        assert!(p.contains("earlier line"), "what came before");
+        assert!(p.contains("(nothing)"), "a way to decline that is not an empty reply");
+    }
+
+    #[test]
+    #[ignore = "spends a real Claude turn; run explicitly"]
+    fn a_real_turn_comes_back_parsed() {
+        // The one thing unit tests cannot fake: --output-format json returns
+        // an *array* whose last element carries the result, and reading it as
+        // a single object finds nothing while looking perfectly healthy.
+        let adapter = ClaudeAdapter::new();
+        adapter.start().expect("claude CLI should be reachable and logged in");
+
+        let reply = adapter
+            .wake(&request("Reply with exactly the word: pineapple"))
+            .expect("the turn should succeed")
+            .expect("a reply, not silence");
+        assert!(reply.to_lowercase().contains("pineapple"), "got: {reply}");
+
+        // Without the session id every wake is a first meeting, and the room
+        // would look like it was working the whole time.
+        assert!(adapter.session.lock().unwrap().is_some(), "session not kept");
+    }
+}

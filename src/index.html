@@ -300,6 +300,7 @@ let primary = localStorage.getItem('primary') || 'claude';
 let shown = 0;              // how many log lines are already on screen
 let seenFrom = new Set();
 let presence = {};          // name -> {state, age_secs}
+let managed = {};           // lowercased name -> {state, detail}, agents we run
 
 const nameOf = (id) => (KNOWN.find(a => a.id === id) || {}).name || id;
 const speakerClass = (from) => {
@@ -331,7 +332,21 @@ async function pollPresence() {
     const rows = await invoke('bus_presence');
     presence = {};
     for (const r of rows) presence[r.who] = r;
-    const RAIL_KEY = 'consortium.railHidden';
+  } catch (_) { /* no presence yet */ }
+
+  // Agents Consortium runs report their own state. Empty when none could be
+  // started, in which case the presence line above still describes anyone
+  // who joined the room by hand.
+  try {
+    const rows = await invoke('agent_states');
+    managed = {};
+    for (const r of rows) managed[r.who.toLowerCase()] = r;
+  } catch (_) { managed = {}; }
+
+  renderParticipants();
+}
+
+const RAIL_KEY = 'consortium.railHidden';
 function applyRail(hidden) {
   document.body.classList.toggle('rail-hidden', hidden);
   const btn = $('sidebarBtn');
@@ -354,9 +369,7 @@ invoke('app_version')
   .then(v => { $('appVer').textContent = 'v' + v; })
   .catch(() => { $('appVer').textContent = ''; });
 
-renderParticipants();
-  } catch (_) { /* no presence yet */ }
-}
+
 
 async function pollBus() {
   let msgs;
@@ -385,22 +398,37 @@ function renderParticipants() {
   for (const a of KNOWN) {
     const isPrimary = a.id === primary;
     const p = presence[a.name];
-    const joined = seenFrom.has(a.name) || !!p;
-    const listening = p && p.state === 'listening';
+    const m = managed[a.name.toLowerCase()];
+    const joined = seenFrom.has(a.name) || !!p || !!m;
+    // An agent Consortium started is reachable whenever it is up, so "away"
+    // is not a thing that can be true of it.
+    const live = m ? (m.state === 'idle' || m.state === 'working')
+                   : !!(p && p.state === 'listening');
     const el = document.createElement('div');
-    el.className = 'agent' + (listening ? '' : ' off');
+    el.className = 'agent' + (live ? '' : ' off');
     el.innerHTML =
-      '<span class="dot ' + (listening ? a.dot : 'off') + '"></span>' +
+      '<span class="dot ' + (live ? a.dot : 'off') + '"></span>' +
       '<span class="meta"><div class="nm"></div><div class="vr"></div></span>' +
       '<span class="role' + (isPrimary ? ' primary' : '') + '"></span>';
     el.querySelector('.nm').textContent = a.name;
     // An agent only sees new messages while it is blocked on `wait`. Once its
     // turn ends nothing can reach it, so say that rather than implying presence.
     el.querySelector('.vr').textContent =
-      !joined      ? 'not joined'
-      : listening  ? 'listening'
-                   : 'away · ' + agoOf(p ? p.age_secs : 0);
-    el.title = listening
+      m          ? ({ idle: 'ready', working: 'working…', starting: 'starting…',
+                      error: 'error', offline: 'offline' })[m.state] || m.state
+      : !joined  ? 'not joined'
+      : live     ? 'listening'
+                 : 'away · ' + agoOf(p ? p.age_secs : 0);
+
+    // The error case carries its reason. "Codex is not installed" and
+    // "nobody answered" look identical otherwise, and only one is worth
+    // doing anything about.
+    el.title = m
+      ? (m.state === 'error'   ? a.name + ' could not start: ' + (m.detail || 'reason unknown')
+        : m.state === 'working' ? a.name + ' is mid-turn. Anything you send queues behind it.'
+        : m.state === 'idle'    ? 'Consortium will wake ' + a.name + ' when a message is for it.'
+                                : a.name + ' is ' + m.state + '.')
+      : live
       ? a.name + ' is blocked on `consortium wait` and will pick up your next message.'
       : a.name + ' has finished its turn. Give it a turn in its own app to bring it back.';
     const badge = el.querySelector('.role');

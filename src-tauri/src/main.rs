@@ -236,6 +236,55 @@ fn bus_presence() -> Vec<Presence> {
         .collect()
 }
 
+/// What each agent Consortium runs is actually doing.
+///
+/// Distinct from `bus_presence`, which describes the older arrangement where
+/// an agent sat blocked on `consortium wait` and could only be reached during
+/// its own turn. An agent Consortium starts is reachable whenever it is up,
+/// so "away" stops being a meaningful thing to say about it.
+///
+/// Empty when no agent could be started — the UI falls back to presence,
+/// which is still correct for anyone joining the room by hand.
+#[derive(Serialize)]
+struct AgentStatus {
+    who: String,
+    /// offline | starting | idle | working | error
+    state: String,
+    /// Why, when the state is an error. Carried separately so the UI can show
+    /// the reason without parsing it back out of a label.
+    detail: Option<String>,
+}
+
+#[tauri::command]
+fn agent_states(studio: tauri::State<Studio>) -> Vec<AgentStatus> {
+    // Cloned out of the lock: asking an adapter for its state takes the
+    // adapter's own lock, and holding Studio across that invites a deadlock
+    // with a turn that is finishing at the same moment.
+    let manager = studio.agents.lock().unwrap().clone();
+    let Some(manager) = manager else {
+        return Vec::new();
+    };
+
+    manager
+        .states()
+        .into_iter()
+        .map(|(who, state)| {
+            let detail = match &state {
+                agent::AgentState::Error(why) => Some(why.clone()),
+                _ => None,
+            };
+            let label = match state {
+                agent::AgentState::Offline => "offline",
+                agent::AgentState::Starting => "starting",
+                agent::AgentState::Idle => "idle",
+                agent::AgentState::Working => "working",
+                agent::AgentState::Error(_) => "error",
+            };
+            AgentStatus { who, state: label.to_string(), detail }
+        })
+        .collect()
+}
+
 #[tauri::command]
 fn bus_post(from: String, text: String) {
     bus::post(&from, &text);
@@ -492,11 +541,55 @@ fn watch_workspace(app: AppHandle, dir: PathBuf) -> notify::Result<RecommendedWa
             return;
         }
         let _ = handle.emit(WORKSPACE_CHANGED, ());
+
+        // The room changed, so somebody may need waking. Cheap by design:
+        // this only decides and enqueues — the turn itself runs on the
+        // agent's own thread, so a slow model never holds up the watcher.
+        // The Arc is cloned out of the lock first; calling poll while
+        // holding Studio would deadlock the moment a turn posted a reply.
+        let manager = handle.state::<Studio>().agents.lock().unwrap().clone();
+        if let Some(manager) = manager {
+            manager.poll();
+        }
     })?;
 
     // The log lives in a subdirectory, so this has to be recursive to see it.
     watcher.watch(&dir, RecursiveMode::Recursive)?;
     Ok(watcher)
+}
+
+/// Brings up every agent that can actually run, and returns the manager that
+/// wakes them.
+///
+/// One agent being unavailable must not cost us the others: Codex needs its
+/// desktop app and Claude needs a logged-in CLI, and either can be missing on
+/// a perfectly good machine. So each is tried, failures are named in the log,
+/// and whoever answers gets to work.
+fn start_agents() -> Option<std::sync::Arc<manager::AgentManager>> {
+    let candidates: Vec<std::sync::Arc<dyn agent::AgentAdapter>> = vec![
+        std::sync::Arc::new(claude_adapter::ClaudeAdapter::new()),
+        std::sync::Arc::new(codex_adapter::CodexAdapter::new()),
+    ];
+
+    let mut ready: Vec<std::sync::Arc<dyn agent::AgentAdapter>> = Vec::new();
+    for adapter in candidates {
+        match adapter.start() {
+            Ok(()) => {
+                bus::log(&format!("agent: {} ready", adapter.name()));
+                ready.push(adapter);
+            }
+            // Named, not swallowed. "Nobody answered" and "Codex is not
+            // installed" look identical from the room, and only one of them
+            // is worth doing anything about.
+            Err(e) => bus::log(&format!("agent: {} unavailable: {e}", adapter.name())),
+        }
+    }
+
+    if ready.is_empty() {
+        bus::log("agent: none available — messages will be posted but nobody will be woken");
+        return None;
+    }
+    Some(std::sync::Arc::new(manager::AgentManager::start(ready)))
 }
 
 fn main() {
@@ -533,6 +626,20 @@ fn main() {
                     "workspace watcher unavailable, falling back to polling: {e}"
                 )),
             }
+
+            // Off the startup path on purpose. Bringing an agent up means
+            // spawning a process and finishing a handshake, and doing that
+            // here would hold the window closed for as long as the slowest
+            // agent takes to answer — or, if one hangs, forever. The room is
+            // perfectly usable before anyone can be woken.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                let started = start_agents();
+                *handle.state::<Studio>().agents.lock().unwrap() = started;
+                // The status line is asking on a timer, but say so now rather
+                // than leaving it to look offline until the next tick.
+                let _ = handle.emit(WORKSPACE_CHANGED, ());
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -542,6 +649,7 @@ fn main() {
             reveal_workspace,
             bus_messages,
             bus_presence,
+            agent_states,
             bus_post,
             app_version,
             cli_installed,
