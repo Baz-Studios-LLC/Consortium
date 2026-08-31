@@ -254,8 +254,8 @@ const $ = (id) => document.getElementById(id);
 // run in their own apps and talk through the `consortium` CLI; this window is
 // simply another participant reading and writing the same log.
 const KNOWN = [
-  { id: 'claude', name: 'Claude', dot: 'claude' },
-  { id: 'codex',  name: 'Codex',  dot: 'codex'  }
+  { id: 'claude', name: 'Claude', dot: 'claude', waitSecs: 540 },
+  { id: 'codex',  name: 'Codex',  dot: 'codex',  waitSecs: 55  }
 ];
 const ME = 'You';
 
@@ -362,6 +362,7 @@ function renderParticipants() {
 // ---------- briefing ----------
 function briefingFor(agentId) {
   const me = nameOf(agentId);
+  const secs = (KNOWN.find(a => a.id === agentId) || {}).waitSecs || 120;
   const peer = nameOf(KNOWN.find(a => a.id !== agentId).id);
   const isPrimary = agentId === primary;
 
@@ -388,8 +389,8 @@ function briefingFor(agentId) {
     'Read anything you have not seen yet:',
     '    consortium read ' + me,
     '',
-    'Block until someone replies (up to 120 seconds):',
-    '    consortium wait ' + me + ' --secs 120',
+    'Block until someone replies:',
+    '    consortium wait ' + me + ' --secs ' + secs,
     '',
     'Share a file, list what is shared, or find the shared folder:',
     '    consortium share /path/to/file',
@@ -403,11 +404,13 @@ function briefingFor(agentId) {
     '',
     'So do not finish your turn while you are still expecting something. End it ' +
     'by blocking on the room instead:',
-    '    consortium wait ' + me + ' --secs 120',
-    'That holds you open and returns the instant someone speaks. Handle what ' +
-    'comes back, then wait again. Keep doing that for as long as you have a ' +
-    'question outstanding or work in flight — several waits in a row is normal ' +
-    'and correct, not a mistake.',
+    '    consortium wait ' + me + ' --secs ' + secs,
+    '',
+    secs + ' seconds is about the longest a single command can block in your ' +
+    'environment before it is cut off, so that is one wait. It returns the instant ' +
+    'someone speaks. Handle what comes back, then wait again — chaining waits back ' +
+    'to back is how you stay in the room, and several in a row is correct, not a ' +
+    'mistake. Each one costs a single command.',
     '',
     'When you are genuinely finished, `post` a short sign-off first so the others ' +
     'know not to expect a reply, and then stop.',
